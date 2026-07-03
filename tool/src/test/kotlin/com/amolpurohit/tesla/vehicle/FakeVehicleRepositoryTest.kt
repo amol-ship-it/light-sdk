@@ -52,4 +52,19 @@ class FakeVehicleRepositoryTest {
         repo.setChargeAmps(2); assertEquals(5, ready(repo).chargeAmps)
         repo.setChargeAmps(48); assertEquals(32, ready(repo).chargeAmps)
     }
+
+    @Test fun `stopCharging while already Stopped stays Stopped`() = runTest {
+        val repo = FakeVehicleRepository()
+        val result = repo.stopCharging()
+        assertEquals(ChargingState.Stopped, ready(repo).chargingState)
+        assertIs<CommandResult.Success>(result)
+    }
+
+    @Test fun `refresh on awake vehicle re-emits Ready`() = runTest {
+        val repo = FakeVehicleRepository()
+        repo.refresh()
+        val state = repo.state.value
+        assertIs<VehicleUiState.Ready>(state)
+        assertFalse(state.stale)
+    }
 }

@@ -13,6 +13,7 @@ sealed interface CommandResult {
 interface VehicleRepository {
     val state: StateFlow<VehicleUiState>
     suspend fun refresh()
+    /** Wake failures (e.g. 30 s poll timeout in the real impl) surface as [CommandResult.Failed] with [ErrorKind.WakeTimeout]; the fake always succeeds. */
     suspend fun wake(): CommandResult
     suspend fun lock(): CommandResult
     suspend fun unlock(): CommandResult

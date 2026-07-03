@@ -4,6 +4,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * In-memory [VehicleRepository] that mirrors real vehicle semantics closely enough to power
@@ -16,6 +18,7 @@ class FakeVehicleRepository(
 ) : VehicleRepository {
 
     private var vehicle: VehicleState = initial
+    private val mutex = Mutex()
 
     private val _state = MutableStateFlow<VehicleUiState>(uiStateFor(vehicle))
     override val state: StateFlow<VehicleUiState> = _state.asStateFlow()
@@ -26,10 +29,12 @@ class FakeVehicleRepository(
     }
 
     override suspend fun wake(): CommandResult {
-        maybeDelay()
-        vehicle = vehicle.copy(asleep = false)
-        emitReady()
-        return CommandResult.Success
+        return mutex.withLock {
+            maybeDelay()
+            vehicle = vehicle.copy(asleep = false)
+            emitReady()
+            CommandResult.Success
+        }
     }
 
     override suspend fun lock(): CommandResult = mutate { it.copy(locked = true) }
@@ -37,11 +42,13 @@ class FakeVehicleRepository(
     override suspend fun unlock(): CommandResult = mutate { it.copy(locked = false) }
 
     override suspend fun startCharging(): CommandResult {
-        maybeDelay()
-        if (!vehicle.pluggedIn) return CommandResult.Rejected("Not plugged in")
-        vehicle = vehicle.copy(chargingState = ChargingState.Charging)
-        emitReady()
-        return CommandResult.Success
+        return mutex.withLock {
+            maybeDelay()
+            if (!vehicle.pluggedIn) return@withLock CommandResult.Rejected("Not plugged in")
+            vehicle = vehicle.copy(chargingState = ChargingState.Charging)
+            emitReady()
+            CommandResult.Success
+        }
     }
 
     override suspend fun stopCharging(): CommandResult =
@@ -72,10 +79,12 @@ class FakeVehicleRepository(
         mutate { it.copy(windowsOpen = false) }
 
     private suspend fun mutate(transform: (VehicleState) -> VehicleState): CommandResult {
-        maybeDelay()
-        vehicle = transform(vehicle)
-        emitReady()
-        return CommandResult.Success
+        return mutex.withLock {
+            maybeDelay()
+            vehicle = transform(vehicle)
+            emitReady()
+            CommandResult.Success
+        }
     }
 
     private suspend fun maybeDelay() {
@@ -94,6 +103,8 @@ class FakeVehicleRepository(
         }
 
     companion object {
+        // pluggedIn is fixed at construction — no command mutates it; use the initial-state
+        // constructor param to simulate unplugged.
         val DEFAULT = VehicleState(
             batteryPercent = 72,
             rangeKm = 340.0,
