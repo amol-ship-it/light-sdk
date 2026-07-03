@@ -155,17 +155,16 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                         }
                     }
 
-                    // Nav link to Climate screen: uncommented in Task 8.
                     LightText(
                         text = "Charging →",
                         variant = LightTextVariant.Copy,
                         modifier = Modifier.lightClickable { navigateTo(::ChargeScreen) },
                     )
-                    // LightText(
-                    //     text = "Climate →",
-                    //     variant = LightTextVariant.Copy,
-                    //     modifier = Modifier.lightClickable { navigateTo(::ClimateScreen) },
-                    // )
+                    LightText(
+                        text = "Climate →",
+                        variant = LightTextVariant.Copy,
+                        modifier = Modifier.lightClickable { navigateTo(::ClimateScreen) },
+                    )
                 }
             }
         }
