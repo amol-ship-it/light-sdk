@@ -70,6 +70,19 @@ class ClimateScreenViewModelTest {
         } finally { Dispatchers.resetMain() }
     }
 
+    @Test fun `setOverheatProtection with current mode is a no-op`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val repo = FakeVehicleRepository()  // DEFAULT: NoAc
+            val vm = ClimateScreenViewModel(repo)
+            vm.setOverheatProtection(OverheatProtectionMode.NoAc)
+            assertNull(vm.pending.value)  // guard returned before setting pending — no repo call was made
+            advanceUntilIdle()
+            val state = (repo.state.value as VehicleUiState.Ready).state
+            assertEquals(OverheatProtectionMode.NoAc, state.overheatProtection)
+        } finally { Dispatchers.resetMain() }
+    }
+
     @Test fun `toggleDogMode delegates to repo`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {

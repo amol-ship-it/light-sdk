@@ -134,7 +134,7 @@ class ClimateScreen(sealedActivity: SealedLightActivity) :
                                     "A/C" to OverheatProtectionMode.Ac,
                                 ),
                                 current = state.state.overheatProtection,
-                                enabled = enabledFor(ClimateCommand.Overheat),
+                                enabled = pending == null,
                                 onSelect = viewModel::setOverheatProtection,
                             )
                             UpdatedAtLine(
@@ -180,7 +180,7 @@ class ClimateScreen(sealedActivity: SealedLightActivity) :
                         is VehicleUiState.Error -> {
                             UpdatedAtLine(updatedAtMs = state.updatedAtMs)
                             LightText(
-                                text = state.kind.name,
+                                text = errorMessage(state.kind),
                                 variant = LightTextVariant.Detail,
                                 lighten = true,
                                 modifier = Modifier.padding(top = 0.5f.gridUnitsAsDp()),

@@ -166,7 +166,7 @@ class ChargeScreen(sealedActivity: SealedLightActivity) :
                         is VehicleUiState.Error -> {
                             UpdatedAtLine(updatedAtMs = state.updatedAtMs)
                             LightText(
-                                text = state.kind.name,
+                                text = errorMessage(state.kind),
                                 variant = LightTextVariant.Detail,
                                 lighten = true,
                                 modifier = Modifier.padding(top = 0.5f.gridUnitsAsDp()),
