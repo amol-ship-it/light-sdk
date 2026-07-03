@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import com.amolpurohit.tesla.Graph
 import com.amolpurohit.tesla.ui.components.CommandButton
 import com.amolpurohit.tesla.ui.components.StatusRow
+import com.amolpurohit.tesla.ui.components.UpdatedAtLine
 import com.amolpurohit.tesla.vehicle.ChargingState
 import com.amolpurohit.tesla.vehicle.VehicleState
 import com.amolpurohit.tesla.vehicle.VehicleUiState
@@ -42,6 +43,10 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
         val ui by viewModel.ui.collectAsState()
         val pending by viewModel.pending.collectAsState()
         val commandError by viewModel.commandError.collectAsState()
+
+        // Single in-flight command: while one command is pending every other button is
+        // disabled (the pending one shows its own spinner via `pending`).
+        fun enabledFor(command: Command) = pending == null || pending == command
 
         LightTheme(colors = themeColors) {
             Box(
@@ -77,18 +82,21 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                                 CommandButton(
                                     label = if (state.state.locked) "Unlock" else "Lock",
                                     pending = pending == Command.Lock,
+                                    enabled = enabledFor(Command.Lock),
                                     error = commandError.messageFor(Command.Lock),
                                     onClick = viewModel::toggleLock,
                                 )
                                 CommandButton(
                                     label = if (state.state.climateOn) "Climate off" else "Climate on",
                                     pending = pending == Command.Climate,
+                                    enabled = enabledFor(Command.Climate),
                                     error = commandError.messageFor(Command.Climate),
                                     onClick = viewModel::toggleClimate,
                                 )
                                 CommandButton(
                                     label = if (state.state.windowsOpen) "Close windows" else "Vent windows",
                                     pending = pending == Command.Windows,
+                                    enabled = enabledFor(Command.Windows),
                                     error = commandError.messageFor(Command.Windows),
                                     onClick = viewModel::toggleWindows,
                                 )
@@ -96,6 +104,7 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                                     CommandButton(
                                         label = if (state.state.chargingState == ChargingState.Charging) "Stop charging" else "Start charging",
                                         pending = pending == Command.Charging,
+                                        enabled = enabledFor(Command.Charging),
                                         error = commandError.messageFor(Command.Charging),
                                         onClick = viewModel::toggleCharging,
                                     )
@@ -103,6 +112,7 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                                 CommandButton(
                                     label = "Refresh",
                                     pending = pending == Command.Refresh,
+                                    enabled = enabledFor(Command.Refresh),
                                     error = commandError.messageFor(Command.Refresh),
                                     onClick = viewModel::refresh,
                                 )
@@ -116,6 +126,7 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                                 CommandButton(
                                     label = "Wake",
                                     pending = pending == Command.Wake,
+                                    enabled = enabledFor(Command.Wake),
                                     error = commandError.messageFor(Command.Wake),
                                     onClick = viewModel::wake,
                                 )
@@ -135,6 +146,7 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                                 CommandButton(
                                     label = "Refresh",
                                     pending = pending == Command.Refresh,
+                                    enabled = enabledFor(Command.Refresh),
                                     error = commandError.messageFor(Command.Refresh),
                                     onClick = viewModel::refresh,
                                 )
@@ -159,9 +171,6 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
     }
 }
 
-private fun CommandError?.messageFor(command: Command): String? =
-    this?.takeIf { it.command == command }?.message
-
 // StatusRow has no lighten mode (spec's Task 6 "lightened if easy" wording, not built into the
 // component yet); cached rows render with the same weight as live rows for now.
 @Composable
@@ -177,20 +186,4 @@ private fun DashboardRows(state: VehicleState) {
     )
     StatusRow(label = "Locked", value = if (state.locked) "Locked" else "Unlocked")
     StatusRow(label = "Windows", value = if (state.windowsOpen) "Open" else "Closed")
-}
-
-@Composable
-private fun UpdatedAtLine(updatedAtMs: Long?, suffix: String? = null, badge: String? = null) {
-    val text = when {
-        updatedAtMs == null && badge != null -> badge
-        updatedAtMs == null -> "—"
-        badge != null -> "${formatUpdatedAt(System.currentTimeMillis(), updatedAtMs)} · $badge"
-        else -> "${formatUpdatedAt(System.currentTimeMillis(), updatedAtMs)}${suffix.orEmpty()}"
-    }
-    LightText(
-        text = text,
-        variant = LightTextVariant.Detail,
-        lighten = true,
-        modifier = Modifier.padding(top = 0.5f.gridUnitsAsDp()),
-    )
 }

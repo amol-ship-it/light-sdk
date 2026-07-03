@@ -3,31 +3,33 @@ package com.amolpurohit.tesla.ui
 import androidx.lifecycle.viewModelScope
 import com.amolpurohit.tesla.vehicle.ChargingState
 import com.amolpurohit.tesla.vehicle.CommandResult
-import com.amolpurohit.tesla.vehicle.ErrorKind
 import com.amolpurohit.tesla.vehicle.VehicleRepository
 import com.amolpurohit.tesla.vehicle.VehicleUiState
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SimpleLightScreen
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 
 enum class Command { Lock, Climate, Windows, Charging, Wake, Refresh }
 
-data class CommandError(val command: Command, val message: String)
+typealias CommandError = TrackedError<Command>
 
 class HomeScreenViewModel(
     private val repo: VehicleRepository,
 ) : LightViewModel<Unit>() {
 
+    private val tracker = CommandTracker<Command>()
+
     val ui: StateFlow<VehicleUiState> = repo.state
-    val pending = MutableStateFlow<Command?>(null)
-    val commandError = MutableStateFlow<CommandError?>(null)
+    val pending: StateFlow<Command?> = tracker.pending
+    val commandError: StateFlow<CommandError?> = tracker.error
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         super.onScreenShow(screen)
         refresh()
     }
+
+    // The `as? Ready` guards below look unreachable (the buttons only render in Ready) but
+    // cover the compose-race window: a tap can land just as the state flips away from Ready.
 
     fun toggleLock() {
         val locked = (ui.value as? VehicleUiState.Ready)?.state?.locked ?: return
@@ -55,31 +57,13 @@ class HomeScreenViewModel(
     }
 
     fun refresh() {
-        pending.value = Command.Refresh
-        viewModelScope.launch {
+        runCommand(Command.Refresh) {
             repo.refresh()
-            pending.value = null
+            CommandResult.Success
         }
     }
 
     private fun runCommand(command: Command, block: suspend () -> CommandResult) {
-        pending.value = command
-        viewModelScope.launch {
-            when (val result = block()) {
-                is CommandResult.Success -> commandError.value = null
-                is CommandResult.Rejected -> commandError.value = CommandError(command, result.reason)
-                is CommandResult.Failed -> commandError.value = CommandError(command, errorMessage(result.kind))
-            }
-            pending.value = null
-        }
-    }
-
-    private fun errorMessage(kind: ErrorKind): String = when (kind) {
-        ErrorKind.Offline -> "No connection"
-        ErrorKind.AuthExpired -> "Sign-in expired"
-        ErrorKind.KeyNotEnrolled -> "Key not enrolled"
-        ErrorKind.RateLimited -> "Try again later"
-        ErrorKind.WakeTimeout -> "Car didn't wake"
-        ErrorKind.Unknown -> "Something went wrong"
+        tracker.launch(viewModelScope, command, block)
     }
 }
