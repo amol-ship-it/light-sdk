@@ -58,7 +58,7 @@ ui  →  vehicle (VehicleRepository)  →  fleet (REST)  →  Tesla Fleet API
 ### 4.3 `vcp` — Vehicle Command Protocol port
 Pure-Kotlin port of the signing layer from Tesla's open-source Go reference (`teslamotors/vehicle-command`). No third-party deps; crypto via JDK/AndroidOpenSSL providers (P-256 ECDH `KeyAgreement`, `AES/GCM/NoPadding`, SHA-256).
 
-- `Proto`: hand-written encoder/decoder for the minimal protobuf message set: `RoutableMessage`, session-info request/response, `VCSEC` action messages (lock/unlock, window control via closure requests), `CarServer.Action` messages (charging, climate, overheat, dog mode, charge limit/amps). Varint + length-delimited wire format only — small, fully unit-tested.
+- `Proto`: hand-written encoder/decoder for the minimal protobuf message set: `RoutableMessage`, session-info request/response, `VCSEC` action messages (lock/unlock), `CarServer.Action` messages (charging, climate, overheat, dog mode, charge limit/amps). Varint + length-delimited wire format only — small, fully unit-tested. Open point to resolve at M3 start, before codec work: confirm from the Go reference whether window vent/close routes through VCSEC closure requests or Infotainment `CarServer.VehicleControlWindowAction`; the test-vector gate catches a wrong guess either way.
 - `SessionManager`: per-domain (VCSEC, Infotainment) session state — vehicle public key, shared secret via ECDH, epoch, clock offset, anti-replay counter. Handshake on first command; cached in memory; re-handshake once automatically on session faults (`MESSAGE_FAULT` family), then surface error.
 - `CommandSigner`: builds the encrypted, authenticated envelope (AES-GCM over the action payload with session-derived key, metadata per reference implementation), returns base64 for `FleetClient.signedCommand`.
 - Design rule: `Proto` and `CommandSigner` are pure functions of inputs (no I/O) so they can be verified against committed test vectors.
@@ -69,7 +69,7 @@ Pure-Kotlin port of the signing layer from Tesla's open-source Go reference (`te
   - `suspend fun refresh()`
   - `suspend fun wake()` — explicit, never implicit on open
   - Command methods: `lock()`, `unlock()`, `startCharging()`, `stopCharging()`, `setChargeLimit(pct)`, `setChargeAmps(a)`, `climateOn()`, `climateOff()`, `setTemp(c)`, `setOverheatProtection(mode)`, `setDogMode(on)`, `ventWindows()`, `closeWindows()`
-- Command orchestration: if last-known state is asleep → `wakeUp` + poll `vehicleData` every 3 s up to 30 s (progress reported) → sign via `vcp` → send → on success, `refresh()`.
+- Command orchestration: if last-known state is asleep → `wakeUp` + poll the lightweight vehicle-status endpoint (vehicle list entry `state` field, not `vehicle_data`) every 3 s up to 30 s (progress reported) → sign via `vcp` → send → on success, one `vehicle_data` refresh. Polling the cheap endpoint keeps the wake path inside the API budget invariant (§7).
 - Caching: last good `VehicleState` serialized to DataStore; loaded synchronously on start so the dashboard renders instantly with a `stale` flag and timestamp.
 - `FakeVehicleRepository` implements the same interface for emulator/UI development and tests.
 
@@ -79,7 +79,7 @@ Owner-side ceremony, documented in the tool README, automated by `scripts/setup/
 
 1. **Developer registration (computer, once):** create Tesla developer account + app registration (client id/secret).
 2. **Key + domain (computer, once):** `keygen` script generates the P-256 keypair; owner publishes the public key at `https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem` (GitHub Pages); `register` script calls Tesla's partner-registration endpoint.
-3. **Login (computer, once):** `login` script runs the OAuth authorization-code+PKCE flow via the owner's browser with a localhost redirect, exchanges the code, and renders a **terminal QR code** containing JSON: `{v: 1, refresh_token, client_id, client_secret?, region, private_key}`.
+3. **Login (computer, once):** `login` script runs the OAuth authorization-code+PKCE flow via the owner's browser with a localhost redirect, exchanges the code, and renders a **terminal QR code** containing JSON: `{v: 1, refresh_token, client_id, client_secret?, region, private_key}`. `client_secret` is required only if token refresh for the registered app demands it (Tesla confidential clients); the on-device refresh path otherwise uses `client_id` alone, and the setup validator accepts either shape. Because the payload (refresh token ≈1 KB + PKCS#8 key) approaches practical QR density limits, the script deflate-compresses + base64url-encodes the JSON, and falls back to a numbered multi-part QR sequence (`part i/n` header, scanned in any order) if a single code would exceed reliable scan density.
 4. **Phone:** Setup screen scans the QR (`LightQrCodeScanner`), validates payload version/fields, persists via `CredentialStore`, calls `listVehicles()`, owner picks the Model 3.
 5. **Virtual key enrollment (once):** owner opens `https://tesla.com/_ak/<domain>` with the official Tesla app on their existing smartphone and approves. Setup screen has a **"Verify key"** action that sends a benign signed command (session-info handshake) and reports enrolled / not-enrolled.
 
@@ -113,6 +113,7 @@ Every command control carries its own in-flight indicator and disables while pen
 | Auth expired/revoked | Refresh grant rejected | "Re-link account" → SetupScreen |
 | Key not enrolled | VCP handshake whoami/permission fault | Points at enrollment step with the `_ak` URL |
 | Session fault | `MESSAGE_FAULT` family in response | One silent re-handshake + retry, then inline error |
+| Command rejected by vehicle | Failure reason in signed-command response protobuf (e.g., can't vent windows while driving, can't stop charging in current state) | Inline message translating the vehicle's reason to plain language; no retry |
 | Rate limited | HTTP 429 | Inline "Tesla is rate-limiting, try later"; no auto-retry |
 
 No raw HTTP/protocol errors are ever shown; every failure names the next user action.
