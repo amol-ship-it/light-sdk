@@ -13,6 +13,7 @@ import com.thelightphone.sdk.ui.gridUnitsAsDp
 
 /**
  * A two-column dashboard line: [label] left, [value] right, full width.
+ * Pass "—" as value when the underlying data is unknown/loading — call sites share this convention.
  */
 @Composable
 fun StatusRow(label: String, value: String) {

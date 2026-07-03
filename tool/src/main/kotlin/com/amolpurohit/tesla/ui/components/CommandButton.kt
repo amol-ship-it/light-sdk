@@ -29,8 +29,8 @@ private const val UNDERLINE_THICKNESS_PX = 3f
 fun CommandButton(
     label: String,
     pending: Boolean,
-    error: String?,
     enabled: Boolean = true,
+    error: String? = null,
     onClick: () -> Unit,
 ) {
     val colors = LightThemeTokens.colors

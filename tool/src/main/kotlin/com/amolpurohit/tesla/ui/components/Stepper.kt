@@ -1,8 +1,10 @@
 package com.amolpurohit.tesla.ui.components
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,13 +37,22 @@ fun Stepper(
             variant = LightTextVariant.Copy,
             modifier = Modifier.weight(1f),
         )
-        LightText(
-            text = "−",
-            variant = LightTextVariant.Heading,
+        // U+2212 (visual minus), intentionally not ASCII hyphen
+        Box(
             modifier = Modifier
-                .lightClickable(enabled = !pending, onClick = onDecrement)
-                .padding(horizontal = 0.75f.gridUnitsAsDp()),
-        )
+                .size(2f.gridUnitsAsDp())
+                .lightClickable(
+                    enabled = !pending,
+                    onClickLabel = "Decrease $label",
+                    onClick = onDecrement,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            LightText(
+                text = "−",
+                variant = LightTextVariant.Heading,
+            )
+        }
         LightText(
             text = value,
             variant = LightTextVariant.Copy,
@@ -49,12 +60,20 @@ fun Stepper(
             lighten = pending,
             modifier = Modifier.padding(horizontal = 0.5f.gridUnitsAsDp()),
         )
-        LightText(
-            text = "+",
-            variant = LightTextVariant.Heading,
+        Box(
             modifier = Modifier
-                .lightClickable(enabled = !pending, onClick = onIncrement)
-                .padding(horizontal = 0.75f.gridUnitsAsDp()),
-        )
+                .size(2f.gridUnitsAsDp())
+                .lightClickable(
+                    enabled = !pending,
+                    onClickLabel = "Increase $label",
+                    onClick = onIncrement,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            LightText(
+                text = "+",
+                variant = LightTextVariant.Heading,
+            )
+        }
     }
 }
