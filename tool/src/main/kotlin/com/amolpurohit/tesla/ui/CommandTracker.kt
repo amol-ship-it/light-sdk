@@ -16,6 +16,10 @@ import kotlinx.coroutines.launch
  * indicator; a single pending slot means overlapping commands cannot clobber
  * each other's pending/error state). Screens render other buttons disabled
  * while one runs.
+ *
+ * Not thread-safe: [launch] must always be called from a single thread. The
+ * check-then-set on the pending slot is only race-free because view-model
+ * methods are invoked exclusively from Compose's main-thread click handlers.
  */
 class CommandTracker<C : Any> {
     private val _pending = MutableStateFlow<C?>(null)
