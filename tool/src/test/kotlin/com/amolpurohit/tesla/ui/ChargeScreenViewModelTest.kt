@@ -24,6 +24,7 @@ class ChargeScreenViewModelTest {
             val repo = FakeVehicleRepository(initial = FakeVehicleRepository.DEFAULT.copy(chargeLimitPercent = 100))
             val vm = ChargeScreenViewModel(repo)
             vm.incrementLimit()
+            assertNull(vm.pending.value)  // guard returned before setting pending — no repo call was made
             advanceUntilIdle()
             val state = (repo.state.value as VehicleUiState.Ready).state
             assertEquals(100, state.chargeLimitPercent)
@@ -36,6 +37,7 @@ class ChargeScreenViewModelTest {
             val repo = FakeVehicleRepository(initial = FakeVehicleRepository.DEFAULT.copy(chargeLimitPercent = 50))
             val vm = ChargeScreenViewModel(repo)
             vm.decrementLimit()
+            assertNull(vm.pending.value)  // guard returned before setting pending — no repo call was made
             advanceUntilIdle()
             val state = (repo.state.value as VehicleUiState.Ready).state
             assertEquals(50, state.chargeLimitPercent)
@@ -60,6 +62,7 @@ class ChargeScreenViewModelTest {
             val repo = FakeVehicleRepository(initial = FakeVehicleRepository.DEFAULT.copy(chargeAmps = 32, maxChargeAmps = 32))
             val vm = ChargeScreenViewModel(repo)
             vm.incrementAmps()
+            assertNull(vm.pending.value)  // guard returned before setting pending — no repo call was made
             advanceUntilIdle()
             val state = (repo.state.value as VehicleUiState.Ready).state
             assertEquals(32, state.chargeAmps)
@@ -72,6 +75,7 @@ class ChargeScreenViewModelTest {
             val repo = FakeVehicleRepository(initial = FakeVehicleRepository.DEFAULT.copy(chargeAmps = 5))
             val vm = ChargeScreenViewModel(repo)
             vm.decrementAmps()
+            assertNull(vm.pending.value)  // guard returned before setting pending — no repo call was made
             advanceUntilIdle()
             val state = (repo.state.value as VehicleUiState.Ready).state
             assertEquals(5, state.chargeAmps)
