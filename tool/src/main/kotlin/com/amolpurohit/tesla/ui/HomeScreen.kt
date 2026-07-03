@@ -27,6 +27,7 @@ import com.thelightphone.sdk.ui.LightTheme
 import com.thelightphone.sdk.ui.LightThemeController
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.gridUnitsAsDp
+import com.thelightphone.sdk.ui.lightClickable
 
 @InitialScreen
 class HomeScreen(sealedActivity: SealedLightActivity) :
@@ -154,12 +155,12 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                         }
                     }
 
-                    // Nav links to Charge/Climate screens: uncommented in Tasks 7/8.
-                    // LightText(
-                    //     text = "Charging →",
-                    //     variant = LightTextVariant.Copy,
-                    //     modifier = Modifier.lightClickable { navigateTo(::ChargeScreen) },
-                    // )
+                    // Nav link to Climate screen: uncommented in Task 8.
+                    LightText(
+                        text = "Charging →",
+                        variant = LightTextVariant.Copy,
+                        modifier = Modifier.lightClickable { navigateTo(::ChargeScreen) },
+                    )
                     // LightText(
                     //     text = "Climate →",
                     //     variant = LightTextVariant.Copy,
