@@ -32,3 +32,15 @@ class FleetOfflineException(cause: Throwable) : FleetException("Network error re
  */
 class FleetHttpException(val code: Int, val briefBody: String) :
     FleetException("Fleet API HTTP $code: $briefBody")
+
+/**
+ * HTTP 200 but the payload is missing data we explicitly requested — e.g. a
+ * vehicle_data response without one of the charge_state/climate_state/
+ * vehicle_state blocks (asleep car, or a server ignoring the endpoints
+ * filter), or an empty "response" envelope. Mapping such a payload onto
+ * VehicleState would fabricate values (0% battery, unlocked, overheat Off)
+ * indistinguishable from real data, so we refuse instead; callers (the
+ * repository layer) catch this and fall back to cached state.
+ */
+class FleetPartialDataException(val missing: String) :
+    FleetException("Fleet API response missing expected data: $missing")

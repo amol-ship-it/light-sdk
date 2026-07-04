@@ -18,6 +18,7 @@ import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.Closeable
 import java.io.IOException
 
 /**
@@ -48,7 +49,7 @@ class FleetClient(
     engine: HttpClientEngine,
     private val tokens: TokenSource,
     region: String,
-) : FleetApi {
+) : FleetApi, Closeable {
 
     private companion object {
         private val jsonCodec = Json { ignoreUnknownKeys = true }
@@ -73,6 +74,8 @@ class FleetClient(
     }
 
     override suspend fun vehicleSummary(id: String): VehicleSummary? {
+        // Deliberately re-fetches the vehicle LIST: it's the cheap/budget-safe
+        // state poll per spec §4.4/§7 — do not "optimize" to vehicle_data.
         return listVehicles().firstOrNull { it.id == id }
     }
 
@@ -84,7 +87,7 @@ class FleetClient(
         ) {
             parameter("endpoints", "charge_state;climate_state;vehicle_state")
         }
-        val data = envelope.response ?: throw FleetHttpException(200, "empty vehicle_data response")
+        val data = envelope.response ?: throw FleetPartialDataException("vehicle_data response envelope")
         return data.toVehicleState()
     }
 
@@ -105,7 +108,7 @@ class FleetClient(
             }
         }
         val responseB64 = envelope.response?.response
-            ?: throw FleetHttpException(200, "empty signed_command response")
+            ?: throw FleetPartialDataException("signed_command response envelope")
         return SignedCommandResponse(responseB64)
     }
 
@@ -175,6 +178,10 @@ class FleetClient(
                 throw FleetHttpException(response.status.value, brief)
             }
         }
+    }
+
+    override fun close() {
+        client.close()
     }
 }
 

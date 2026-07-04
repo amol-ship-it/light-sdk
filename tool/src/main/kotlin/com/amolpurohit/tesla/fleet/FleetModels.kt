@@ -91,9 +91,22 @@ private const val MILES_TO_KM = 1.609344
  * Unrecognized values fall back to Off.
  */
 internal fun VehicleDataDto.toVehicleState(): VehicleState {
-    val charge = chargeState ?: ChargeStateDto()
-    val climate = climateState ?: ClimateStateDto()
-    val vehicle = vehicleState ?: VehicleStateDto()
+    // We explicitly request all three blocks via the endpoints query param,
+    // so any missing block means a degraded response (asleep car, or server
+    // ignoring the filter). Defaulting the missing block would fabricate a
+    // plausible-but-wrong VehicleState (0% battery, unlocked, overheat Off) —
+    // refuse instead and let the repository fall back to cached state.
+    val missing = listOfNotNull(
+        "charge_state".takeIf { chargeState == null },
+        "climate_state".takeIf { climateState == null },
+        "vehicle_state".takeIf { vehicleState == null },
+    )
+    if (missing.isNotEmpty()) {
+        throw FleetPartialDataException(missing.joinToString(","))
+    }
+    val charge = requireNotNull(chargeState)
+    val climate = requireNotNull(climateState)
+    val vehicle = requireNotNull(vehicleState)
 
     val cableConnected = charge.connChargeCable != null && charge.connChargeCable != "<invalid>"
     val latchEngaged = charge.chargePortLatch == "Engaged"

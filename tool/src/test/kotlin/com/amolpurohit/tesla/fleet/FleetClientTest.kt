@@ -245,6 +245,50 @@ class FleetClientTest {
     }
 
     @Test
+    fun `pluggedIn true when cable null but latch engaged`() = runTest {
+        // Exercises the corroborating-evidence branch of the pluggedIn
+        // heuristic: no conn_charge_cable, but charge_port_latch "Engaged".
+        val json = """
+            {"response": {
+                "state": "online",
+                "charge_state": {"battery_level": 50, "battery_range": 100.0, "charging_state": "Stopped", "charge_limit_soc": 80, "charge_amps": 16, "charge_current_request_max": 32, "charge_port_latch": "Engaged"},
+                "climate_state": {"inside_temp": 20.0, "is_climate_on": false, "driver_temp_setting": 21.0, "min_avail_temp": 15.0, "max_avail_temp": 28.0, "cabin_overheat_protection": "Off", "climate_keeper_mode": "off"},
+                "vehicle_state": {"locked": true, "fd_window": 0, "fp_window": 0, "rd_window": 0, "rp_window": 0}
+            }}
+        """.trimIndent()
+        val engine = MockEngine { _ ->
+            respond(json, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val client = FleetClient(engine, CountingFakeTokenSource(), "na")
+
+        val state = client.vehicleData("1234567890")
+
+        assertTrue(state.pluggedIn)
+    }
+
+    @Test
+    fun `missing charge_state block throws FleetPartialDataException`() = runTest {
+        // Degraded response: 200 with climate/vehicle blocks but no
+        // charge_state. Must NOT map to a zero-defaulted VehicleState.
+        val json = """
+            {"response": {
+                "state": "online",
+                "climate_state": {"inside_temp": 20.0, "is_climate_on": false, "driver_temp_setting": 21.0, "min_avail_temp": 15.0, "max_avail_temp": 28.0, "cabin_overheat_protection": "Off", "climate_keeper_mode": "off"},
+                "vehicle_state": {"locked": true, "fd_window": 0, "fp_window": 0, "rd_window": 0, "rp_window": 0}
+            }}
+        """.trimIndent()
+        val engine = MockEngine { _ ->
+            respond(json, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val client = FleetClient(engine, CountingFakeTokenSource(), "na")
+
+        val e = assertFailsWith<FleetPartialDataException> {
+            client.vehicleData("1234567890")
+        }
+        assertEquals("charge_state", e.missing)
+    }
+
+    @Test
     fun `vehicleSummary returns matching entry from list`() = runTest {
         val json = """
             {"response": [
