@@ -1,5 +1,6 @@
 package com.amolpurohit.tesla.auth
 
+import com.amolpurohit.tesla.fleet.TokenSource
 import io.ktor.client.HttpClient
 import io.ktor.client.request.forms.FormDataContent
 import io.ktor.client.request.post
@@ -46,7 +47,7 @@ class TokenManager(
     private val client: HttpClient,
     private val credentials: CredentialStore,
     private val nowMs: () -> Long = System::currentTimeMillis,
-) {
+) : TokenSource {
     private companion object {
         private const val TOKEN_URL = "https://auth.tesla.com/oauth2/v3/token"
         private const val EARLY_REFRESH_MS = 60_000L
@@ -57,7 +58,7 @@ class TokenManager(
     private var accessToken: String? = null
     private var expiresAtMs: Long = 0L
 
-    suspend fun bearer(): String = mutex.withLock {
+    override suspend fun bearer(): String = mutex.withLock {
         val cached = accessToken
         if (cached != null && !isExpiredLocked()) {
             return@withLock cached
@@ -65,7 +66,7 @@ class TokenManager(
         refreshLocked()
     }
 
-    suspend fun invalidate() = mutex.withLock {
+    override suspend fun invalidate() = mutex.withLock {
         accessToken = null
         expiresAtMs = 0L
     }
