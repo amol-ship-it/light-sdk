@@ -12,7 +12,7 @@ interface KeyValueStore {
     suspend fun remove(key: String)
 }
 
-class InMemoryKeyValueStore : KeyValueStore {
+open class InMemoryKeyValueStore : KeyValueStore {
     private val map = mutableMapOf<String, String>()
     override suspend fun get(key: String) = map[key]
     override suspend fun put(key: String, value: String) { map[key] = value }
