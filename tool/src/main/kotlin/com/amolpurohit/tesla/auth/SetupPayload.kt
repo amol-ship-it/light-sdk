@@ -102,6 +102,9 @@ data class SetupPayload(
         }
 
         private fun decode(encoded: String): ScanResult {
+            // The two e.message interpolations below are safe: base64/inflate
+            // exceptions carry format-level text only ("Illegal base64 character",
+            // "invalid block type"), never decoded payload content.
             val deflated = try {
                 java.util.Base64.getUrlDecoder().decode(encoded)
             } catch (e: IllegalArgumentException) {
