@@ -26,7 +26,7 @@ class SetupScreenViewModelTest {
 
     /** Scriptable [FleetApi] fake; only listVehicles matters for this VM. */
     private class FakeFleetApi(
-        private val vehiclesResult: () -> List<VehicleSummary> = { emptyList() },
+        private val vehiclesResult: suspend () -> List<VehicleSummary> = { emptyList() },
     ) : FleetApi {
         var listVehiclesCount = 0
             private set
@@ -66,9 +66,11 @@ class SetupScreenViewModelTest {
         try {
             val store = InMemoryKeyValueStore()
             val credentials = CredentialStore(store)
-            var persistedBeforeListing = false
+            // Read the store AT listVehicles-invocation time: this fails if the VM ever
+            // reorders to list before persisting (Task 18 depends on persist-before-list).
+            var credentialsPresentAtListTime = false
             val api = FakeFleetApi(vehiclesResult = {
-                persistedBeforeListing = true
+                credentialsPresentAtListTime = credentials.load() != null
                 listOf(sampleVehicle)
             })
             val viewModel = SetupScreenViewModel(credentials, apiFactory = { api })
@@ -80,7 +82,7 @@ class SetupScreenViewModelTest {
             val step = viewModel.step.value
             assertIs<SetupStep.PickingVehicle>(step)
             assertEquals(listOf(sampleVehicle), step.vehicles)
-            assertTrue(persistedBeforeListing)
+            assertTrue(credentialsPresentAtListTime, "credentials must be persisted before listVehicles runs")
             assertTrue(credentials.load() != null)
         } finally { Dispatchers.resetMain() }
     }
