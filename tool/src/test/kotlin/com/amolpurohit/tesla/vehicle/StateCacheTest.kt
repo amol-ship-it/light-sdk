@@ -53,10 +53,11 @@ class StateCacheTest {
 
     @Test
     fun `throwing store returns null`() = runTest {
-        val throwingStore = object : InMemoryKeyValueStore() {
-            override suspend fun get(key: String): String? {
+        val throwingStore = object : com.amolpurohit.tesla.store.KeyValueStore {
+            override suspend fun get(key: String): String? =
                 throw java.io.IOException("Simulated store failure")
-            }
+            override suspend fun put(key: String, value: String) {}
+            override suspend fun remove(key: String) {}
         }
         val cacheWithThrowingStore = StateCache(throwingStore)
         val loaded = cacheWithThrowingStore.load()
