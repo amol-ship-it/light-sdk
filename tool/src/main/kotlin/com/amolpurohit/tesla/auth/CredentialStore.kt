@@ -30,6 +30,12 @@ class CredentialStore(private val store: KeyValueStore) {
         null
     }
 
+    /**
+     * Load-modify-save; NOT atomic across the two store calls. Safe only when
+     * callers serialize access externally — TokenManager must hold its mutex
+     * across the HTTP refresh AND this persist. Never call concurrently from
+     * multiple call sites.
+     */
     suspend fun updateRefreshToken(newToken: String) {
         val payload = load() ?: return
         val updated = payload.copy(refreshToken = newToken)
