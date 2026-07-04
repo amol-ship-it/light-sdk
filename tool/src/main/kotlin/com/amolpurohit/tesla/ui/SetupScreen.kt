@@ -81,7 +81,17 @@ class SetupScreenViewModel(
     // over the same client instead of constructing (and leaking) a fresh FleetClient per attempt.
     private var api: FleetApi? = null
 
+    override fun onCleared() {
+        super.onCleared()
+        (api as? java.io.Closeable)?.close()
+    }
+
     fun onScan(text: String) {
+        // The UI only renders the scanner in Scanning/NeedMore, but enforce the
+        // invariant here too: a stray scan during listing/picking must not race
+        // persistAndListVehicles or mutate accumulated state.
+        if (_step.value !is SetupStep.Scanning && _step.value !is SetupStep.NeedMore) return
+
         scans += text
         when (val result = SetupPayload.fromScans(scans)) {
             is SetupPayload.Complete -> {
