@@ -33,6 +33,11 @@ class RealVehicleRepository(
     private val wakeBudgetMs: Long = 30_000,
 ) : VehicleRepository {
 
+    // Serializes refresh() and wake(). NOTE: wake() holds this for up to
+    // wakeBudgetMs (30 s), so a concurrent refresh() suspends behind it.
+    // Safe today because CommandTracker's single-in-flight rule prevents the
+    // UI from overlapping commands — any new caller (auto-refresh-on-resume,
+    // background sync) must preserve that guarantee or accept the stall.
     private val mutex = Mutex()
 
     private val _state = MutableStateFlow<VehicleUiState>(VehicleUiState.Loading)
@@ -108,6 +113,10 @@ class RealVehicleRepository(
             val fresh = api.vehicleData(vehicleId)
             val at = nowMs()
             lastGood = fresh to at
+            // cache.save is assumed non-throwing (StateCache propagates write
+            // failures; current KeyValueStore impls don't throw on put). If a
+            // future store can throw, wrap or reorder so lastGood/_state stay
+            // coherent.
             cache.save(fresh, at)
             _state.value = VehicleUiState.Ready(state = fresh, updatedAtMs = at, stale = false)
         } catch (e: VehicleAsleepException) {
