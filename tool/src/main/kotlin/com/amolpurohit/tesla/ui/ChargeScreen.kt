@@ -10,6 +10,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.viewModelScope
 import com.amolpurohit.tesla.Graph
 import com.amolpurohit.tesla.ui.components.CommandButton
@@ -22,6 +24,7 @@ import com.amolpurohit.tesla.vehicle.VehicleUiState
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -29,7 +32,13 @@ import com.thelightphone.sdk.ui.LightTheme
 import com.thelightphone.sdk.ui.LightThemeController
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.gridUnitsAsDp
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 enum class ChargeCommand { Limit, Amps, Charging }
 
@@ -41,42 +50,74 @@ private const val LIMIT_MAX = 100
 private const val AMPS_STEP = 1
 private const val AMPS_MIN = 5
 
-class ChargeScreenViewModel(
-    private val repo: VehicleRepository,
+class ChargeScreenViewModel private constructor(
+    initialRepo: VehicleRepository?,
+    private val dataStore: DataStore<Preferences>?,
 ) : LightViewModel<Unit>() {
+
+    /** Test constructor: repo is available immediately, so [ui] is never Loading-for-resolution. */
+    constructor(repo: VehicleRepository) : this(initialRepo = repo, dataStore = null)
+
+    /** Production constructor: the screen hands over its own `lightContext.dataStore`; the real repo resolves in [onScreenShow]. */
+    constructor(dataStore: DataStore<Preferences>) : this(initialRepo = null, dataStore = dataStore)
 
     private val tracker = CommandTracker<ChargeCommand>()
 
-    val ui: StateFlow<VehicleUiState> = repo.state
+    private val repoFlow = MutableStateFlow(initialRepo)
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val ui: StateFlow<VehicleUiState> = repoFlow
+        .flatMapLatest { repo -> repo?.state ?: flowOf(VehicleUiState.Loading) }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            initialRepo?.state?.value ?: VehicleUiState.Loading,
+        )
+
     val pending: StateFlow<ChargeCommand?> = tracker.pending
     val commandError: StateFlow<ChargeCommandError?> = tracker.error
 
+    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+        super.onScreenShow(screen)
+        val store = dataStore
+        if (repoFlow.value == null && store != null) {
+            viewModelScope.launch {
+                repoFlow.value = Graph.repository(store)
+            }
+        }
+    }
+
     fun incrementLimit() {
         val state = (ui.value as? VehicleUiState.Ready)?.state ?: return
+        val repo = repoFlow.value ?: return
         if (state.chargeLimitPercent >= LIMIT_MAX) return
         runCommand(ChargeCommand.Limit) { repo.setChargeLimit(state.chargeLimitPercent + LIMIT_STEP) }
     }
 
     fun decrementLimit() {
         val state = (ui.value as? VehicleUiState.Ready)?.state ?: return
+        val repo = repoFlow.value ?: return
         if (state.chargeLimitPercent <= LIMIT_MIN) return
         runCommand(ChargeCommand.Limit) { repo.setChargeLimit(state.chargeLimitPercent - LIMIT_STEP) }
     }
 
     fun incrementAmps() {
         val state = (ui.value as? VehicleUiState.Ready)?.state ?: return
+        val repo = repoFlow.value ?: return
         if (state.chargeAmps >= state.maxChargeAmps) return
         runCommand(ChargeCommand.Amps) { repo.setChargeAmps(state.chargeAmps + AMPS_STEP) }
     }
 
     fun decrementAmps() {
         val state = (ui.value as? VehicleUiState.Ready)?.state ?: return
+        val repo = repoFlow.value ?: return
         if (state.chargeAmps <= AMPS_MIN) return
         runCommand(ChargeCommand.Amps) { repo.setChargeAmps(state.chargeAmps - AMPS_STEP) }
     }
 
     fun toggleCharging() {
         val state = (ui.value as? VehicleUiState.Ready)?.state ?: return
+        val repo = repoFlow.value ?: return
         val isCharging = state.chargingState == ChargingState.Charging
         runCommand(ChargeCommand.Charging) { if (isCharging) repo.stopCharging() else repo.startCharging() }
     }
@@ -92,7 +133,7 @@ class ChargeScreen(sealedActivity: SealedLightActivity) :
     override val viewModelClass: Class<ChargeScreenViewModel>
         get() = ChargeScreenViewModel::class.java
 
-    override fun createViewModel(): ChargeScreenViewModel = ChargeScreenViewModel(Graph.repository())
+    override fun createViewModel(): ChargeScreenViewModel = ChargeScreenViewModel(lightContext.dataStore)
 
     @Composable
     override fun Content() {

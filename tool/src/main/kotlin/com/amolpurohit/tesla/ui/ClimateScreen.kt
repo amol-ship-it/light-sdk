@@ -10,6 +10,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.viewModelScope
 import com.amolpurohit.tesla.Graph
 import com.amolpurohit.tesla.ui.components.CommandButton
@@ -23,6 +25,7 @@ import com.amolpurohit.tesla.vehicle.VehicleUiState
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
 import com.thelightphone.sdk.SealedLightActivity
+import com.thelightphone.sdk.SimpleLightScreen
 import com.thelightphone.sdk.ui.LightScrollView
 import com.thelightphone.sdk.ui.LightText
 import com.thelightphone.sdk.ui.LightTextVariant
@@ -30,7 +33,13 @@ import com.thelightphone.sdk.ui.LightTheme
 import com.thelightphone.sdk.ui.LightThemeController
 import com.thelightphone.sdk.ui.LightThemeTokens
 import com.thelightphone.sdk.ui.gridUnitsAsDp
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 enum class ClimateCommand { Power, Temp, Overheat, DogMode }
 
@@ -38,42 +47,74 @@ typealias ClimateCommandError = TrackedError<ClimateCommand>
 
 private const val TEMP_STEP = 0.5
 
-class ClimateScreenViewModel(
-    private val repo: VehicleRepository,
+class ClimateScreenViewModel private constructor(
+    initialRepo: VehicleRepository?,
+    private val dataStore: DataStore<Preferences>?,
 ) : LightViewModel<Unit>() {
+
+    /** Test constructor: repo is available immediately, so [ui] is never Loading-for-resolution. */
+    constructor(repo: VehicleRepository) : this(initialRepo = repo, dataStore = null)
+
+    /** Production constructor: the screen hands over its own `lightContext.dataStore`; the real repo resolves in [onScreenShow]. */
+    constructor(dataStore: DataStore<Preferences>) : this(initialRepo = null, dataStore = dataStore)
 
     private val tracker = CommandTracker<ClimateCommand>()
 
-    val ui: StateFlow<VehicleUiState> = repo.state
+    private val repoFlow = MutableStateFlow(initialRepo)
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val ui: StateFlow<VehicleUiState> = repoFlow
+        .flatMapLatest { repo -> repo?.state ?: flowOf(VehicleUiState.Loading) }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            initialRepo?.state?.value ?: VehicleUiState.Loading,
+        )
+
     val pending: StateFlow<ClimateCommand?> = tracker.pending
     val commandError: StateFlow<ClimateCommandError?> = tracker.error
 
+    override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
+        super.onScreenShow(screen)
+        val store = dataStore
+        if (repoFlow.value == null && store != null) {
+            viewModelScope.launch {
+                repoFlow.value = Graph.repository(store)
+            }
+        }
+    }
+
     fun toggleClimate() {
         val state = (ui.value as? VehicleUiState.Ready)?.state ?: return
+        val repo = repoFlow.value ?: return
         val turnOn = !state.climateOn
         runCommand(ClimateCommand.Power) { repo.setClimateOn(turnOn) }
     }
 
     fun incrementTargetTemp() {
         val state = (ui.value as? VehicleUiState.Ready)?.state ?: return
+        val repo = repoFlow.value ?: return
         if (state.targetTempC >= state.maxTargetTempC) return
         runCommand(ClimateCommand.Temp) { repo.setTargetTemp(state.targetTempC + TEMP_STEP) }
     }
 
     fun decrementTargetTemp() {
         val state = (ui.value as? VehicleUiState.Ready)?.state ?: return
+        val repo = repoFlow.value ?: return
         if (state.targetTempC <= state.minTargetTempC) return
         runCommand(ClimateCommand.Temp) { repo.setTargetTemp(state.targetTempC - TEMP_STEP) }
     }
 
     fun setOverheatProtection(mode: OverheatProtectionMode) {
         val state = (ui.value as? VehicleUiState.Ready)?.state ?: return
+        val repo = repoFlow.value ?: return
         if (state.overheatProtection == mode) return
         runCommand(ClimateCommand.Overheat) { repo.setOverheatProtection(mode) }
     }
 
     fun toggleDogMode() {
         val state = (ui.value as? VehicleUiState.Ready)?.state ?: return
+        val repo = repoFlow.value ?: return
         val turnOn = !state.dogModeOn
         runCommand(ClimateCommand.DogMode) { repo.setDogMode(turnOn) }
     }
@@ -89,7 +130,7 @@ class ClimateScreen(sealedActivity: SealedLightActivity) :
     override val viewModelClass: Class<ClimateScreenViewModel>
         get() = ClimateScreenViewModel::class.java
 
-    override fun createViewModel(): ClimateScreenViewModel = ClimateScreenViewModel(Graph.repository())
+    override fun createViewModel(): ClimateScreenViewModel = ClimateScreenViewModel(lightContext.dataStore)
 
     @Composable
     override fun Content() {

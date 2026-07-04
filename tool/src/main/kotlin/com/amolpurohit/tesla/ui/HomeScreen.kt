@@ -10,11 +10,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import com.amolpurohit.tesla.Graph
 import com.amolpurohit.tesla.ui.components.CommandButton
 import com.amolpurohit.tesla.ui.components.StatusRow
 import com.amolpurohit.tesla.ui.components.UpdatedAtLine
 import com.amolpurohit.tesla.vehicle.ChargingState
+import com.amolpurohit.tesla.vehicle.ErrorKind
 import com.amolpurohit.tesla.vehicle.VehicleState
 import com.amolpurohit.tesla.vehicle.VehicleUiState
 import com.thelightphone.sdk.InitialScreen
@@ -36,7 +36,7 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
     override val viewModelClass: Class<HomeScreenViewModel>
         get() = HomeScreenViewModel::class.java
 
-    override fun createViewModel(): HomeScreenViewModel = HomeScreenViewModel(Graph.repository())
+    override fun createViewModel(): HomeScreenViewModel = HomeScreenViewModel(lightContext.dataStore)
 
     @Composable
     override fun Content() {
@@ -67,6 +67,14 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                     when (val state = ui) {
                         is VehicleUiState.NoCredentials -> {
                             LightText(text = "Setup required", variant = LightTextVariant.Copy)
+                            Column(modifier = Modifier.fillMaxWidth().padding(top = 1f.gridUnitsAsDp())) {
+                                CommandButton(
+                                    label = "Set up",
+                                    pending = false,
+                                    enabled = true,
+                                    onClick = { navigateTo(::SetupScreen) },
+                                )
+                            }
                         }
 
                         is VehicleUiState.Loading -> {
@@ -151,6 +159,14 @@ class HomeScreen(sealedActivity: SealedLightActivity) :
                                     error = commandError.messageFor(Command.Refresh),
                                     onClick = viewModel::refresh,
                                 )
+                                if (state.kind == ErrorKind.AuthExpired) {
+                                    CommandButton(
+                                        label = "Re-link account",
+                                        pending = false,
+                                        enabled = true,
+                                        onClick = { navigateTo(::SetupScreen) },
+                                    )
+                                }
                             }
                         }
                     }

@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.viewModelScope
+import com.amolpurohit.tesla.Graph
 import com.amolpurohit.tesla.auth.CredentialStore
 import com.amolpurohit.tesla.auth.SetupPayload
 import com.amolpurohit.tesla.auth.TokenManager
@@ -144,7 +145,7 @@ class SetupScreenViewModel(
         viewModelScope.launch {
             credentials.saveVehicle(id = vehicle.id, vin = vehicle.vin, name = vehicle.name)
             _step.value = SetupStep.Done
-            // Task 18: Graph.reset() here
+            Graph.reset()
         }
     }
 

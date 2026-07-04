@@ -1,9 +1,25 @@
 package com.amolpurohit.tesla.ui
 
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import com.amolpurohit.tesla.vehicle.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.*
 import kotlin.test.*
+
+/** Minimal in-memory [DataStore] fake — just enough to satisfy the constructor's type; the
+ * "Loading until resolved" test never lets a real read reach it (asserted before any pump). */
+private class FakePreferencesDataStore : DataStore<Preferences> {
+    private val flow = MutableStateFlow(emptyPreferences())
+    override val data = flow
+    override suspend fun updateData(transform: suspend (t: Preferences) -> Preferences): Preferences {
+        val updated = transform(flow.value)
+        flow.value = updated
+        return updated
+    }
+}
 
 class HomeScreenViewModelTest {
     @Test fun `lock command sets pending then clears`() = runTest {
@@ -59,6 +75,23 @@ class HomeScreenViewModelTest {
             advanceUntilIdle()
             val cached = (repo.state.value as VehicleUiState.Asleep).cached
             assertEquals(true, cached?.locked)  // no repo mutation happened
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `ui is Ready immediately when constructed with a repo`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val repo = FakeVehicleRepository()
+            val vm = HomeScreenViewModel(repo)
+            assertIs<VehicleUiState.Ready>(vm.ui.value)
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `ui is Loading until the repo resolves via the dataStore constructor`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val vm = HomeScreenViewModel(FakePreferencesDataStore())
+            assertEquals(VehicleUiState.Loading, vm.ui.value)
         } finally { Dispatchers.resetMain() }
     }
 }
