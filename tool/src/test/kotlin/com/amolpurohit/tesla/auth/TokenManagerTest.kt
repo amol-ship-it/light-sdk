@@ -238,6 +238,70 @@ class TokenManagerTest {
     }
 
     @Test
+    fun `malformed 200 throws sanitized error`() = runTest {
+        val engine = MockEngine { _ ->
+            respond(
+                content = """{"access_token":"at1","refresh_token":"secretRT456","expires_in":""}""",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+        val credentialStore = seededStore()
+        val manager = TokenManager(HttpClient(engine), credentialStore)
+
+        val e = assertFailsWith<IllegalStateException> {
+            manager.bearer()
+        }
+        val message = e.message.orEmpty()
+        assertFalse(message.contains("secretRT456"), "message leaked refresh token: $message")
+        assertFalse(message.contains("at1"), "message leaked access token: $message")
+    }
+
+    @Test
+    fun `exactly 60s remaining counts as expired`() = runTest {
+        val hitCount = AtomicInteger(0)
+        var currentTime = 0L
+        val engine = MockEngine { _ ->
+            hitCount.incrementAndGet()
+            respond(
+                content = """{"access_token":"at${hitCount.get()}","refresh_token":"rt${hitCount.get() + 1}","expires_in":100}""",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+        val credentialStore = seededStore()
+        val manager = TokenManager(HttpClient(engine), credentialStore, nowMs = { currentTime })
+
+        manager.bearer()
+        assertEquals(1, hitCount.get())
+
+        // expiresAtMs = 100_000; threshold is expiresAtMs - 60_000 <= nowMs():
+        // at exactly 40_000 (precisely 60s remaining) the token counts as expired.
+        currentTime = 40_000
+
+        manager.bearer()
+        assertEquals(2, hitCount.get())
+    }
+
+    @Test
+    fun `same refresh token round-trips when rotation disabled`() = runTest {
+        val engine = MockEngine { _ ->
+            respond(
+                content = """{"access_token":"at1","refresh_token":"rt1","expires_in":28800}""",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }
+        val credentialStore = seededStore()
+        val manager = TokenManager(HttpClient(engine), credentialStore)
+
+        val token = manager.bearer()
+
+        assertEquals("at1", token)
+        assertEquals("rt1", credentialStore.load()!!.refreshToken)
+    }
+
+    @Test
     fun `concurrent bearer calls produce one refresh`() = runTest {
         val hitCount = AtomicInteger(0)
         val engine = MockEngine { _ ->

@@ -9,6 +9,7 @@ import io.ktor.http.Parameters
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -64,7 +65,7 @@ class TokenManager(
         refreshLocked()
     }
 
-    fun invalidate() {
+    suspend fun invalidate() = mutex.withLock {
         accessToken = null
         expiresAtMs = 0L
     }
@@ -94,7 +95,15 @@ class TokenManager(
             throw IllegalStateException("token refresh HTTP ${response.status.value}: ${response.bodyAsText().take(500)}")
         }
 
-        val tokenResponse = jsonCodec.decodeFromString(TokenResponse.serializer(), response.bodyAsText())
+        val tokenResponse = try {
+            jsonCodec.decodeFromString(TokenResponse.serializer(), response.bodyAsText())
+        } catch (e: SerializationException) {
+            // Same "never log raw" convention as SetupPayload: SerializationException
+            // messages embed the full JSON input — access token and rotated refresh
+            // token verbatim. Rethrow with a static message and NO cause/body/message
+            // interpolation so nothing secret can reach logs or crash reporters.
+            throw IllegalStateException("token refresh returned malformed JSON")
+        }
 
         // Persist the rotated refresh token BEFORE caching/returning the new
         // access token. If this throws, propagate — do not hand back a token
