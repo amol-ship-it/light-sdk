@@ -3,6 +3,7 @@ package com.amolpurohit.tesla.auth
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class SetupPayloadTest {
     private fun encode(json: String): String {   // test helper mirrors the login script
@@ -35,5 +36,21 @@ class SetupPayloadTest {
 
     @Test fun `garbage rejected as Invalid`() {
         assertIs<SetupPayload.Invalid>(SetupPayload.fromScans(listOf("not-a-payload")))
+    }
+
+    @Test fun `scan over 8192 chars rejected`() {
+        assertIs<SetupPayload.Invalid>(SetupPayload.fromScans(listOf("A".repeat(8193))))
+    }
+
+    @Test fun `decompression bomb rejected`() {
+        // 4 MB of zeros deflates to a few KB of base64 (well under the scan cap);
+        // the decoder must abort at its inflate output cap, not materialize the bomb.
+        val bomb = encode("0".repeat(4 * 1024 * 1024))
+        val startNs = System.nanoTime()
+        val p = SetupPayload.fromScans(listOf(bomb))
+        val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+        val invalid = assertIs<SetupPayload.Invalid>(p)
+        assertEquals("payload too large", invalid.reason)
+        assertTrue(elapsedMs < 2_000, "expected early abort, took ${elapsedMs}ms")
     }
 }

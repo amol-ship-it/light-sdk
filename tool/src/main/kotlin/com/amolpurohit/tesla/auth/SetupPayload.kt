@@ -12,6 +12,7 @@ import java.util.zip.Inflater
  * Oversized payloads are split across multiple QR codes, each prefixed with
  * `LTP/<i>/<n>/<data>` (1-based index `i` of `n` total parts), scannable in any order.
  */
+// NEVER log raw — carries refresh_token/private_key
 @Serializable
 data class SetupPayload(
     @SerialName("refresh_token") val refreshToken: String,
@@ -22,6 +23,11 @@ data class SetupPayload(
     @SerialName("domain") val domain: String? = null,
     @SerialName("v") val version: Int = 1,
 ) {
+    /** Redacted: never includes refreshToken/privateKey/clientSecret values. */
+    override fun toString(): String =
+        "SetupPayload(clientId=$clientId, region=$region, domain=$domain, " +
+            "hasSecret=${clientSecret != null}, version=$version)"
+
     sealed interface ScanResult
 
     data class Complete(val payload: SetupPayload) : ScanResult
@@ -30,8 +36,13 @@ data class SetupPayload(
 
     data class Invalid(val reason: String) : ScanResult
 
+    private class InflatedTooLargeException : Exception("inflated payload exceeds cap")
+
     companion object {
+        // Per-scan cap only; does NOT bound total multi-part size — MAX_INFLATED_LENGTH is the real backstop.
         private const val MAX_SCAN_LENGTH = 8192
+        // Generous ceiling on decompressed output (real payload is ~2 KB); guards against deflate bombs.
+        private const val MAX_INFLATED_LENGTH = 64 * 1024
         private const val SUPPORTED_VERSION = 1
         private val partRegex = Regex("""^LTP/(\d+)/(\d+)/(.*)$""", RegexOption.DOT_MATCHES_ALL)
         private val json = Json { ignoreUnknownKeys = true }
@@ -99,20 +110,24 @@ data class SetupPayload(
 
             val inflated = try {
                 inflate(deflated)
+            } catch (e: InflatedTooLargeException) {
+                return Invalid("payload too large")
             } catch (e: Exception) {
                 return Invalid("inflate failed: ${e.message}")
             }
 
+            // Static reasons from here on: exception messages for post-inflate stages
+            // can echo decoded input fragments, which may contain secrets.
             val jsonString = try {
                 inflated.toString(Charsets.UTF_8)
             } catch (e: Exception) {
-                return Invalid("invalid utf-8: ${e.message}")
+                return Invalid("malformed payload")
             }
 
             val payload = try {
                 json.decodeFromString<SetupPayload>(jsonString)
             } catch (e: Exception) {
-                return Invalid("malformed json: ${e.message}")
+                return Invalid("malformed json")
             }
 
             if (payload.version != SUPPORTED_VERSION) {
@@ -132,16 +147,22 @@ data class SetupPayload(
             inflater.setInput(data)
             val out = java.io.ByteArrayOutputStream(data.size * 4 + 64)
             val buf = ByteArray(4096)
-            while (!inflater.finished()) {
-                val n = inflater.inflate(buf)
-                if (n == 0) {
-                    if (inflater.needsInput() || inflater.needsDictionary()) {
-                        throw IllegalStateException("truncated deflate stream")
+            try {
+                while (!inflater.finished()) {
+                    val n = inflater.inflate(buf)
+                    if (n == 0) {
+                        if (inflater.needsInput() || inflater.needsDictionary()) {
+                            throw IllegalStateException("truncated deflate stream")
+                        }
+                    }
+                    out.write(buf, 0, n)
+                    if (out.size() > MAX_INFLATED_LENGTH) {
+                        throw InflatedTooLargeException()
                     }
                 }
-                out.write(buf, 0, n)
+            } finally {
+                inflater.end()
             }
-            inflater.end()
             return out.toByteArray()
         }
     }
