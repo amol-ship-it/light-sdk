@@ -3,6 +3,7 @@ package com.amolpurohit.tesla.ui
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
+import com.amolpurohit.tesla.Graph
 import com.amolpurohit.tesla.vehicle.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -93,5 +94,33 @@ class HomeScreenViewModelTest {
             val vm = HomeScreenViewModel(FakePreferencesDataStore())
             assertEquals(VehicleUiState.Loading, vm.ui.value)
         } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `re-show after Graph reset re-resolves the repo`() = runTest {
+        // Regression for the first-run flow: the NoCredentials sentinel resolves on first show,
+        // then SetupScreen's pick() calls Graph.reset() — the SAME VM instance must pick up the
+        // rebuilt repo on its next show, not stay latched on the stale sentinel.
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val repoA = FakeVehicleRepository(initial = FakeVehicleRepository.DEFAULT.copy(asleep = true))
+            val repoB = FakeVehicleRepository()  // DEFAULT: awake -> Ready
+            Graph.override(repoA)
+            val vm = HomeScreenViewModel(FakePreferencesDataStore())
+
+            vm.onShow()
+            advanceUntilIdle()
+            assertIs<VehicleUiState.Asleep>(vm.ui.value)
+
+            // SetupScreen pick(): clear the Graph memo; the next resolution yields a new repo.
+            Graph.reset()
+            Graph.override(repoB)
+
+            vm.onShow()
+            advanceUntilIdle()
+            assertIs<VehicleUiState.Ready>(vm.ui.value)
+        } finally {
+            Graph.reset()
+            Dispatchers.resetMain()
+        }
     }
 }

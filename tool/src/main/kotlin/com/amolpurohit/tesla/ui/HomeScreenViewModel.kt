@@ -51,8 +51,18 @@ class HomeScreenViewModel private constructor(
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         super.onScreenShow(screen)
+        onShow()
+    }
+
+    /** Body of [onScreenShow]; internal so tests can drive it without constructing a real screen (needs Android). */
+    internal fun onShow() {
         val store = dataStore
-        if (repoFlow.value == null && store != null) {
+        if (store != null) {
+            // Always re-resolve — never latch on repoFlow being non-null: after Graph.reset()
+            // (SetupScreen pick / re-link) the Graph memo is cleared and whatever repoFlow holds
+            // (e.g. the NoCredentials sentinel) is stale. Graph.repository is memoized, so
+            // post-resolution re-shows are cheap and return the same instance (reference-equal
+            // -> MutableStateFlow skips re-emission -> flatMapLatest doesn't restart).
             viewModelScope.launch {
                 repoFlow.value = Graph.repository(store)
                 refresh()

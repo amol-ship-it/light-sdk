@@ -76,11 +76,15 @@ class ClimateScreenViewModel private constructor(
 
     override fun onScreenShow(screen: SimpleLightScreen<Unit>) {
         super.onScreenShow(screen)
-        val store = dataStore
-        if (repoFlow.value == null && store != null) {
-            viewModelScope.launch {
-                repoFlow.value = Graph.repository(store)
-            }
+        val store = dataStore ?: return
+        // Always re-resolve — never latch on repoFlow being non-null: after Graph.reset() the
+        // repo held here (e.g. the NoCredentials sentinel) is stale; Graph.repository is
+        // memoized, so post-resolution re-shows are cheap and reference-equal results don't
+        // re-trigger flatMapLatest. No refresh() after resolving — deliberate asymmetry with
+        // Home: this screen is reached from an already-Ready Home sharing the same repo
+        // instance, so its state is already fresh.
+        viewModelScope.launch {
+            repoFlow.value = Graph.repository(store)
         }
     }
 

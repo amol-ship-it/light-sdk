@@ -93,6 +93,37 @@ class GraphTest {
         // No direct getter exists; verifying reset() doesn't throw and override() seam
         // still works is what's testable here without a DataStore.
         Graph.override(repo)
+        // Graph is a process-wide singleton — clean up so no override leaks into other tests.
+        Graph.reset()
+    }
+
+    @Test
+    fun `repository rebuilds after reset`() = runTest {
+        // Pins the first-run flow: buildRepository must re-evaluate the SAME store on every
+        // call (the sentinel decision is never latched inside Graph) — this is what makes
+        // SetupScreen's pick() -> Graph.reset() -> re-show swap the sentinel for a real stack.
+        val store = InMemoryKeyValueStore()
+        val credentials = CredentialStore(store)
+        val cache = StateCache(InMemoryKeyValueStore())
+
+        val first = Graph.buildRepository(credentials, cache)
+        assertEquals(VehicleUiState.NoCredentials, first.state.value)
+
+        // Simulates SetupScreen completing scan + vehicle pick into the same store.
+        credentials.save(
+            SetupPayload(
+                refreshToken = "rt1",
+                clientId = "cid1",
+                region = "na",
+                privateKey = "pk1",
+            ),
+        )
+        credentials.saveVehicle(id = "123", vin = "5YJ3...", name = "My Model 3")
+
+        val second = Graph.buildRepository(credentials, cache)
+        assertIs<RealVehicleRepository>(second)
+
+        Graph.reset() // closes the real stack's HTTP engine created above
     }
 }
 

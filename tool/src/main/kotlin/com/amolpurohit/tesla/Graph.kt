@@ -89,7 +89,16 @@ object Graph {
         return real
     }
 
-    /** Clears the memoized repository and closes the previous real stack's HTTP engine, if any. Next [repository] call rebuilds. */
+    /**
+     * Clears the memoized repository and closes the previous real stack's HTTP engine, if any.
+     * The next [repository] call rebuilds from the current store contents.
+     *
+     * Deliberately NOT guarded by [mutex] against an in-flight [repository] build: the only
+     * caller is SetupScreen's pick(), which is reachable only AFTER some screen's resolution
+     * already completed and rendered a terminal state, and the single-screen-visible model
+     * means no concurrent build can be in flight at that moment. Any future reset() caller
+     * (or concurrent-screen model) must preserve that invariant or add guarding here.
+     */
     fun reset() {
         closeable?.close()
         closeable = null
