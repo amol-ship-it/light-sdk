@@ -45,3 +45,6 @@ bin/
 
 ### Clanker ###
 .claude/
+
+### Tesla VCP fixture harness ###
+scripts/tesla/vcp-fixtures/upstreamscripts/tesla/vcp-fixtures/fixturegen

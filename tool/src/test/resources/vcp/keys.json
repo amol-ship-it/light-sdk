@@ -1,0 +1,22 @@
+{
+  "description": "Fixed test-only P-256 keys for the VCP fixture suite. NEVER use against a real vehicle. session_key is derived per protocol.md: SHA1(BIG_ENDIAN(ECDH(c,V).x, 32))[:16].",
+  "client_private_pkcs8_b64": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgPdcioGIalZZAogQ9Mk0ktW3HI5zrQS/UamvukiqZd0ehRANCAATIG2ngSxYtWzQKdEjSrlhcztJ4KTCWB/bU/6FEUzN6C0WonwVxLITuZgQ2kk/iG4XoLrKeTw5yO9PFhRzVCnc+",
+  "client_public_b64": "BMgbaeBLFi1bNAp0SNKuWFzO0ngpMJYH9tT/oURTM3oLRaifBXEshO5mBDaST+Ibhegusp5PDnI708WFHNUKdz4=",
+  "vehicle_private_pkcs8_b64": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgrTHcDfHmxFKevDOUa2xtCQEdBXyK+EH3LdcJAB1cLE2hRANCAARtO2ewASZjnCOmg1mx8c31zo+xe1cnfvj293ua4J0K9COUYAu/3pzt53dzcnJlEKBZueZ4fAbNX8oLWs+mj8TM",
+  "vehicle_public_b64": "BG07Z7ABJmOcI6aDWbHxzfXOj7F7Vyd++Pb3e5rgnQr0I5RgC7/enO3nd3NycmUQoFm55nh8Bs1fygtaz6aPxMw=",
+  "ecdh_shared_secret_x_b64": "YuCkIOzZCOcRjEJfR9PYkDlIif67vqxW3uwkNNQDTbc=",
+  "session_key_b64": "yihUlZSTVTP0WRQ0P8tbZg==",
+  "session_key_derivation": "K = SHA1(ECDH(client_private, vehicle_public).x)[:16] -- BIG_ENDIAN 32-byte X coordinate, SHA1, truncate to 16 bytes",
+  "labels": {
+    "session_info_hmac_key_label": "session info",
+    "message_auth_hmac_key_label": "authenticated command"
+  },
+  "gcm_vector": {
+    "key_b64": "yihUlZSTVTP0WRQ0P8tbZg==",
+    "nonce_b64": "0eKj9LXGp7jJ0OHy",
+    "aad_b64": "AAEFAQEDAhE1WUozMDEyMzQ1Njc4OUFCQwMQTEY/nMDT0mkG6YLtIkrd5gQEAAAKXwUEAAAAB/8=",
+    "plaintext_b64": "EgRSAggB",
+    "ciphertext_b64": "D2eMwkFi",
+    "tag_b64": "evemFWV2/MhKHC4GIBJeVQ=="
+  }
+}

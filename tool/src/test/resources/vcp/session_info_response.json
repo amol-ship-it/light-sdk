@@ -1,0 +1,14 @@
+{
+  "description": "Synthetic vehicle SessionInfo handshake response, built with the reference's own authentication.Verifier, for DOMAIN_INFOTAINMENT.",
+  "domain": "Infotainment",
+  "challenge_uuid_b64": "AQIDBAUGBwgJCgsMDQ4PEA==",
+  "routable_message_b64": "MhISECyQe9dsZA02CzAn3HQE7946AggDkgMQAQIDBAUGBwgJCgsMDQ4PEJoDEFhAZYBSi2pTATkYALT+m5l6VRJBBG07Z7ABJmOcI6aDWbHxzfXOj7F7Vyd++Pb3e5rgnQr0I5RgC7/enO3nd3NycmUQoFm55nh8Bs1fygtaz6aPxMwaEN5wYawfZ5DvaU4pAJe6Y51qJDIiCiBMM2vLShOgHrE9/NuFxa7L7FQ7ylVQR88gQjighPSIHw==",
+  "session_info_tag_b64": "TDNry0oToB6xPfzbhcWuy+xUO8pVUEfPIEI4oIT0iB8=",
+  "parsed": {
+    "epoch_b64": "3nBhrB9nkO9pTikAl7pjnQ==",
+    "clock_time": 0,
+    "counter": 0,
+    "vehicle_public_b64": "BG07Z7ABJmOcI6aDWbHxzfXOj7F7Vyd++Pb3e5rgnQr0I5RgC7/enO3nd3NycmUQoFm55nh8Bs1fygtaz6aPxMw=",
+    "status": "SESSION_INFO_STATUS_OK"
+  }
+}

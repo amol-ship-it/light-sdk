@@ -1,0 +1,12 @@
+[
+  {
+    "description": "Session info (handshake) request to VCSEC",
+    "domain": "VCSEC",
+    "routable_message_b64": "MgIIAjoSEhAskHvXbGQNNgswJ9x0BO/emgMQAQIDBAUGBwgJCgsMDQ4PEHJDCkEEyBtp4EsWLVs0CnRI0q5YXM7SeCkwlgf21P+hRFMzegtFqJ8FcSyE7mYENpJP4huF6C6ynk8OcjvTxYUc1Qp3Pg=="
+  },
+  {
+    "description": "Session info (handshake) request to Infotainment",
+    "domain": "Infotainment",
+    "routable_message_b64": "MgIIAzoSEhAskHvXbGQNNgswJ9x0BO/emgMQAQIDBAUGBwgJCgsMDQ4PEHJDCkEEyBtp4EsWLVs0CnRI0q5YXM7SeCkwlgf21P+hRFMzegtFqJ8FcSyE7mYENpJP4huF6C6ynk8OcjvTxYUc1Qp3Pg=="
+  }
+]
