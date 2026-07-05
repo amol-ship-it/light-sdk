@@ -86,7 +86,7 @@ terminated by `TAG_END (255)`:
 
 | Tag | # | Value |
 |---|---|---|
-| TAG_SIGNATURE_TYPE | 0 | `[SIGNATURE_TYPE_HMAC_PERSONALIZED = 5]` (1 byte) |
+| TAG_SIGNATURE_TYPE | 0 | `[SIGNATURE_TYPE_HMAC_PERSONALIZED = 8]` (1 byte — value 8, NOT 5; 5 is the GCM type) |
 | TAG_DOMAIN | 1 | `[domain]` (1 byte: VCSEC=2, Infotainment=3) |
 | TAG_PERSONALIZATION | 2 | VIN ASCII (17 bytes) |
 | TAG_EPOCH | 3 | epoch (16 bytes, from the session-info response) |
@@ -160,7 +160,17 @@ cd scripts/tesla/vcp-fixtures
 go run main.go      # rewrites tool/src/test/resources/vcp/*.json
 ```
 
-Output is deterministic: a clean regeneration leaves `git diff` empty.
+**The committed JSON fixtures are the authoritative static artifact — treat them as
+ground truth; do not regenerate expecting byte-identical output.** Regeneration is
+NOT deterministic: the vendored `authentication.NewVerifier` randomizes the session
+`epoch` via `crypto/rand` (`internal/authentication/verifier.go`) with no injection
+seam, so each regen produces a different epoch and therefore different tags and
+`routable_message_b64` for every command. That does not affect correctness — the
+committed fixtures are internally consistent (every `tag_b64` verifies against its
+own `epoch_b64`/`metadata_b64`/`plaintext_action_b64` per the rule above), and the
+Kotlin port reads the committed files, never regenerates. If you add a NEW command
+fixture, regenerate once and commit the whole new set together (all epochs rotate).
+
 `main.go` cross-checks its independent stdlib ECDH/session derivation against the
 vendored library's own `Session` (it encrypts with the reference and decrypts with
 the from-scratch key), panicking if they ever diverge — so a green run is itself
