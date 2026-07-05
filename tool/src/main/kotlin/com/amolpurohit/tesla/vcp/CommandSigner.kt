@@ -130,6 +130,11 @@ object CommandSigner {
         expiresAt: Int,
         uuid: ByteArray,
     ): ByteArray {
+        // counter is a uint32 on the wire in BOTH the metadata TLV (big-endian)
+        // and the protobuf field (varint). Requiring it to fit uint32 keeps the
+        // two encodings numerically identical; past 2^32 they would diverge
+        // (metadata truncates via toInt(), the varint would not).
+        require(counter in 0..0xFFFFFFFFL) { "counter must fit uint32, got $counter" }
         val metadata = buildMetadata(
             domain = domain,
             vin = session.vin,

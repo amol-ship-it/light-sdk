@@ -8,6 +8,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 
 @Serializable
 private data class SignerCommandFixture(
@@ -242,5 +243,21 @@ class CommandSignerTest {
         val bytes = b64(fixture.routable_message_b64)
 
         assertFalse(CommandSigner.isFault(bytes))
+    }
+
+    @Test
+    fun `sign rejects a counter beyond uint32 range`() {
+        val fixture = commandsFixture().first()
+        val session = sessionFor(fixture)
+        assertFailsWith<IllegalArgumentException> {
+            CommandSigner.sign(
+                session = session,
+                domain = domainOf(fixture.domain),
+                plaintextAction = b64(fixture.plaintext_action_b64),
+                counter = 0x1_0000_0000L, // 2^32 — one past uint32 max
+                expiresAt = fixture.expires_at,
+                uuid = commandUuid,
+            )
+        }
     }
 }
