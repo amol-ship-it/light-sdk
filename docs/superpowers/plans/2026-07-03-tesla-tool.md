@@ -739,13 +739,24 @@ class ProtoWriter {
 
 - [ ] **Step 3: Run to verify pass. Commit** `git add -A tool/ && git commit -m "tesla: protobuf wire codec"`
 
+> **⚠️ Protocol correction from Task 19 (applies to Tasks 21–23).** The Fleet API
+> path signs commands with **HMAC-SHA256 over plaintext protobuf**, NOT an AES-GCM
+> encrypted envelope (GCM is BLE-only). `scripts/tesla/vcp-fixtures/README.md` is the
+> authoritative spec — follow it, not this plan's earlier GCM wording. In short:
+> session key `K = SHA1(ECDH(client_priv, vehicle_pub).x_32be)[:16]`; per-purpose
+> subkey `K' = HMAC-SHA256(K, label)` with labels `"authenticated command"` /
+> `"session info"`; command `tag = HMAC-SHA256(K', metadata ‖ plaintext_payload)`;
+> payload stays plaintext (no encryption, no per-message nonce). AES-GCM survives
+> only as an isolated primitive tested against `keys.json`'s `gcm_vector` (future BLE
+> use), never in the command-signing path.
+
 ### Task 21: VCP crypto primitives
 
 **Files:**
 - Create: `tool/src/main/kotlin/com/amolpurohit/tesla/vcp/VcpCrypto.kt`
 - Test: `tool/src/test/kotlin/com/amolpurohit/tesla/vcp/VcpCryptoTest.kt`
 
-- [ ] **Step 1: Failing tests from `keys.json` fixture:** load client private + vehicle public → ECDH shared secret matches fixture; session key derivation (exact hash/truncation per the reference — encode what Task 19 recorded) matches fixture; AES-GCM encrypt with fixture nonce/AAD reproduces fixture ciphertext+tag.
+- [ ] **Step 1: Failing tests from `keys.json` fixture:** load client private (PKCS#8) + vehicle public (uncompressed point) → ECDH shared secret X matches `ecdh_shared_secret_x_b64`; session key `SHA1(X)[:16]` matches `session_key_b64`; subkey derivation `HMAC-SHA256(K, "authenticated command")` and `HMAC-SHA256(K, "session info")` produce stable values (used by Task 23); **HMAC-SHA256(key, message)** primitive works; AES-GCM encrypt of the `gcm_vector` (key/nonce/aad/plaintext) reproduces its `ciphertext_b64`+`tag_b64` (isolated KAT — NOT the command path).
 
 - [ ] **Step 2: Run to verify failure**, then implement with JDK/AndroidOpenSSL only: `KeyFactory.getInstance("EC")` + PKCS#8/X.509 specs, uncompressed-point encode/decode for P-256 (manual: `0x04 || X(32) || Y(32)`), `KeyAgreement.getInstance("ECDH")`, `MessageDigest` SHA family, `Cipher.getInstance("AES/GCM/NoPadding")`. No BouncyCastle, no reflection.
 
@@ -772,9 +783,9 @@ Hand-written encoders/decoders on top of ProtoWriter/Reader for exactly the subs
 - Create: `tool/src/main/kotlin/com/amolpurohit/tesla/vcp/CommandSigner.kt`
 - Test: `tool/src/test/kotlin/com/amolpurohit/tesla/vcp/CommandSignerTest.kt`
 
-- [ ] **Step 1: Failing tests:** from fixtures — construct `Session` from the parsed session-info response + client key; for every entry in `commands.json`, `CommandSigner.sign(session, action, counter, expiresAt, nonce)` reproduces `routable_message_b64` **byte-for-byte**. Also: counter monotonicity (signing increments), expiry computed as clock-offset-adjusted (per reference semantics recorded in Task 19), and a `session.isFault(response)` classifier tested against `fault_response.json` plus the transcribed fault-code enum (positive and negative cases).
+- [ ] **Step 1: Failing tests:** from fixtures — construct `Session` from the parsed session-info response + client key; for every entry in `commands.json`, `CommandSigner.sign(session, action, counter, expiresAt)` reproduces both `tag_b64` (the HMAC tag) AND the full `routable_message_b64` **byte-for-byte**. Signing is HMAC-SHA256 over `metadata ‖ plaintext_payload` (metadata = the TLV in `metadata_b64`) — no nonce, no encryption (per the Task 19 README). Also: counter monotonicity (signing increments), expiry computed as clock-offset-adjusted, and a `session.isFault(response)` classifier tested against `fault_response.json` plus the transcribed fault-code enum (positive and negative cases).
 
-- [ ] **Step 2: Run to verify failure**, then implement. `Session` is immutable-ish state (epoch, base counter, clock offset, shared key) + `nextCounter()`; `CommandSigner` is pure given explicit nonce/time inputs (prod call sites pass `SecureRandom` nonce + real clock).
+- [ ] **Step 2: Run to verify failure**, then implement. `Session` is immutable-ish state (epoch, base counter, clock offset, session key) + `nextCounter()`; `CommandSigner` is pure given explicit time/counter inputs (prod call sites pass a real clock). The command payload is emitted as plaintext `protobuf_message_as_bytes`; the signature is `HMAC_PersonalizedData{ epoch, counter, expires_at, tag }`.
 
 - [ ] **Step 3: Run to verify pass.** This is the **M3 gate**: `./gradlew :tool:testDebugUnitTest` fully green means the crypto port is done.
 
