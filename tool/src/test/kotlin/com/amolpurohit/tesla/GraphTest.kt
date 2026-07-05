@@ -12,6 +12,18 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
 class GraphTest {
+
+    // Same throwaway P-256 PKCS8 fixture as ClientKeysTest (never used against a real
+    // vehicle) — needed here because buildRepository's real-stack path now constructs a
+    // SignedCommandService via ClientKeys.fromPem(payload.privateKey) eagerly.
+    private val validPkcs8Pem = """
+        -----BEGIN PRIVATE KEY-----
+        MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgJOakS3oBKw8BNAH3
+        VYC8o6j4PWAKWWhnwMhYBK3odl+hRANCAASMhX6VnGQdRxwzfLm5TvuOISp/8EC3
+        ovgnVgY7RZC54kCdjG/rrGG0zH2xzmrfXtN1HREUnyRRmoXITcPjCAHy
+        -----END PRIVATE KEY-----
+    """.trimIndent()
+
     @Test
     fun `buildRepository returns NoCredentialsRepository when store empty`() = runTest {
         val credentials = CredentialStore(InMemoryKeyValueStore())
@@ -71,7 +83,7 @@ class GraphTest {
                 refreshToken = "rt1",
                 clientId = "cid1",
                 region = "na",
-                privateKey = "pk1",
+                privateKey = validPkcs8Pem,
             ),
         )
         credentials.saveVehicle(id = "123", vin = "5YJ3...", name = "My Model 3")
@@ -115,7 +127,7 @@ class GraphTest {
                 refreshToken = "rt1",
                 clientId = "cid1",
                 region = "na",
-                privateKey = "pk1",
+                privateKey = validPkcs8Pem,
             ),
         )
         credentials.saveVehicle(id = "123", vin = "5YJ3...", name = "My Model 3")

@@ -9,7 +9,9 @@ import com.amolpurohit.tesla.store.DataStoreKeyValueStore
 import com.amolpurohit.tesla.vehicle.CommandResult
 import com.amolpurohit.tesla.vehicle.FakeVehicleRepository
 import com.amolpurohit.tesla.vehicle.OverheatProtectionMode
+import com.amolpurohit.tesla.vcp.ClientKeys
 import com.amolpurohit.tesla.vehicle.RealVehicleRepository
+import com.amolpurohit.tesla.vehicle.SignedCommandService
 import com.amolpurohit.tesla.vehicle.StateCache
 import com.amolpurohit.tesla.vehicle.VehicleRepository
 import com.amolpurohit.tesla.vehicle.VehicleUiState
@@ -23,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.Closeable
+import java.security.SecureRandom
 
 /** Flip to true to force the in-memory fake (emulator demos without a live Tesla account). */
 const val USE_FAKE = false
@@ -77,12 +80,21 @@ object Graph {
         val engine = OkHttp.create()
         val tokens = TokenManager(HttpClient(engine), credentials)
         val fleetClient = FleetClient(engine, tokens, payload.region)
+        val secureRandom = SecureRandom()
+        val commands = SignedCommandService(
+            api = fleetClient,
+            keys = ClientKeys.fromPem(payload.privateKey),
+            vin = vehicle.vin,
+            nowMs = System::currentTimeMillis,
+            uuidSource = { ByteArray(16).also(secureRandom::nextBytes) },
+        )
         val real = RealVehicleRepository(
             api = fleetClient,
             cache = cache,
             vehicleId = vehicle.id,
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
             nowMs = System::currentTimeMillis,
+            commands = commands,
         )
         real.start()
         closeable = fleetClient

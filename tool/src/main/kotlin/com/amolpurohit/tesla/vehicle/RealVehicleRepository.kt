@@ -2,6 +2,7 @@ package com.amolpurohit.tesla.vehicle
 
 import com.amolpurohit.tesla.auth.AuthExpiredException
 import com.amolpurohit.tesla.fleet.FleetApi
+import com.amolpurohit.tesla.fleet.FleetHttpException
 import com.amolpurohit.tesla.fleet.FleetOfflineException
 import com.amolpurohit.tesla.fleet.FleetPartialDataException
 import com.amolpurohit.tesla.fleet.RateLimitedException
@@ -15,9 +16,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Production [VehicleRepository] backed by the Fleet API. Read paths only —
- * all 13 command methods are stubbed as [CommandResult.Rejected] until
- * Chunk 4 wires real signed commands through them.
+ * Production [VehicleRepository] backed by the Fleet API. Read paths fetch
+ * `vehicle_data` directly; the 12 command methods delegate through
+ * [commands] (a [SignedCommandService] in production) via [runCommand],
+ * which orchestrates waking the vehicle first when needed and refreshes the
+ * dashboard exactly once after a successful command.
  *
  * [scope] is accepted for interface symmetry with future work (e.g.
  * background polling hooks) but is currently unused: this repository does
@@ -29,6 +32,7 @@ class RealVehicleRepository(
     private val vehicleId: String,
     private val scope: CoroutineScope,
     private val nowMs: () -> Long,
+    private val commands: CommandExecutor,
     private val pollDelayMs: Long = 3_000,
     private val wakeBudgetMs: Long = 30_000,
 ) : VehicleRepository {
@@ -82,29 +86,40 @@ class RealVehicleRepository(
      */
     override suspend fun wake(): CommandResult {
         return mutex.withLock {
-            api.wakeUp(vehicleId)
-
-            var waited = 0L
-            var online = false
-            while (waited < wakeBudgetMs) {
-                val summary = api.vehicleSummary(vehicleId)
-                if (summary?.state == "online") {
-                    online = true
-                    break
-                }
-                delay(pollDelayMs)
-                waited += pollDelayMs
-            }
-
-            if (!online) {
-                val (cached, cachedAt) = lastGood ?: (null to null)
-                _state.value = VehicleUiState.Error(ErrorKind.WakeTimeout, cached, cachedAt)
-                return@withLock CommandResult.Failed(ErrorKind.WakeTimeout)
-            }
-
-            fetchAndEmitLocked()
-            CommandResult.Success
+            wakeLocked()
         }
+    }
+
+    /**
+     * Wakes the vehicle and polls until online or [wakeBudgetMs] is exhausted, emitting
+     * Error(WakeTimeout) and a fresh vehicle_data fetch respectively. Must be called while
+     * holding [mutex] — callers already inside a `mutex.withLock` block (e.g. [runCommand])
+     * call this directly rather than through [wake], which would deadlock on the
+     * non-reentrant mutex.
+     */
+    private suspend fun wakeLocked(): CommandResult {
+        api.wakeUp(vehicleId)
+
+        var waited = 0L
+        var online = false
+        while (waited < wakeBudgetMs) {
+            val summary = api.vehicleSummary(vehicleId)
+            if (summary?.state == "online") {
+                online = true
+                break
+            }
+            delay(pollDelayMs)
+            waited += pollDelayMs
+        }
+
+        if (!online) {
+            val (cached, cachedAt) = lastGood ?: (null to null)
+            _state.value = VehicleUiState.Error(ErrorKind.WakeTimeout, cached, cachedAt)
+            return CommandResult.Failed(ErrorKind.WakeTimeout)
+        }
+
+        fetchAndEmitLocked()
+        return CommandResult.Success
     }
 
     /** One vehicleData call, mapped to a UI state and (on success) persisted. Must be called under [mutex]. */
@@ -140,19 +155,74 @@ class RealVehicleRepository(
         _state.value = VehicleUiState.Error(kind, cached, cachedAt)
     }
 
-    override suspend fun lock(): CommandResult = notYetSupported()
-    override suspend fun unlock(): CommandResult = notYetSupported()
-    override suspend fun startCharging(): CommandResult = notYetSupported()
-    override suspend fun stopCharging(): CommandResult = notYetSupported()
-    override suspend fun setChargeLimit(percent: Int): CommandResult = notYetSupported()
-    override suspend fun setChargeAmps(amps: Int): CommandResult = notYetSupported()
-    override suspend fun setClimateOn(on: Boolean): CommandResult = notYetSupported()
-    override suspend fun setTargetTemp(celsius: Double): CommandResult = notYetSupported()
-    override suspend fun setOverheatProtection(mode: OverheatProtectionMode): CommandResult = notYetSupported()
-    override suspend fun setDogMode(on: Boolean): CommandResult = notYetSupported()
-    override suspend fun ventWindows(): CommandResult = notYetSupported()
-    override suspend fun closeWindows(): CommandResult = notYetSupported()
+    override suspend fun lock(): CommandResult = runCommand(VehicleCommand.Lock)
+    override suspend fun unlock(): CommandResult = runCommand(VehicleCommand.Unlock)
+    override suspend fun startCharging(): CommandResult = runCommand(VehicleCommand.StartCharging)
+    override suspend fun stopCharging(): CommandResult = runCommand(VehicleCommand.StopCharging)
+    override suspend fun setChargeLimit(percent: Int): CommandResult =
+        runCommand(VehicleCommand.SetChargeLimit(percent))
+    override suspend fun setChargeAmps(amps: Int): CommandResult =
+        runCommand(VehicleCommand.SetChargeAmps(amps))
+    override suspend fun setClimateOn(on: Boolean): CommandResult =
+        runCommand(if (on) VehicleCommand.ClimateOn else VehicleCommand.ClimateOff)
+    override suspend fun setTargetTemp(celsius: Double): CommandResult =
+        runCommand(VehicleCommand.SetTemp(celsius.toFloat()))
+    override suspend fun setOverheatProtection(mode: OverheatProtectionMode): CommandResult =
+        runCommand(VehicleCommand.SetOverheatProtection(mode))
+    override suspend fun setDogMode(on: Boolean): CommandResult = runCommand(VehicleCommand.SetDogMode(on))
+    override suspend fun ventWindows(): CommandResult = runCommand(VehicleCommand.VentWindows)
+    override suspend fun closeWindows(): CommandResult = runCommand(VehicleCommand.CloseWindows)
 
-    private fun notYetSupported(): CommandResult =
-        CommandResult.Rejected("Not yet supported in this build")
+    /**
+     * Shared path for all 12 command methods: wakes the vehicle first if it's known to be
+     * asleep (bailing out with [ErrorKind.WakeTimeout] WITHOUT sending the command if the
+     * wake poll times out), sends the command, retries once via a single wake if the vehicle
+     * turned out to be asleep anyway (slept between our last-known-state check and send),
+     * refreshes the dashboard exactly once on success, and maps executor-thrown exceptions
+     * onto [CommandResult]. Must hold [mutex] for its entire body — [wakeLocked] and
+     * [fetchAndEmitLocked] are NOT separately locked, so no nested `mutex.withLock` may occur
+     * here (the mutex is non-reentrant).
+     */
+    private suspend fun runCommand(command: VehicleCommand): CommandResult = mutex.withLock {
+        if (_state.value is VehicleUiState.Asleep) {
+            val wakeResult = wakeLocked()
+            if (wakeResult is CommandResult.Failed) {
+                return@withLock wakeResult
+            }
+        }
+
+        executeAndHandle(command, allowWakeRetry = true)
+    }
+
+    private suspend fun executeAndHandle(command: VehicleCommand, allowWakeRetry: Boolean): CommandResult {
+        return try {
+            when (val result = commands.execute(vehicleId, command)) {
+                is CommandResult.Success -> {
+                    fetchAndEmitLocked()
+                    result
+                }
+                is CommandResult.Rejected -> result
+                is CommandResult.Failed -> result
+            }
+        } catch (e: VehicleAsleepException) {
+            if (!allowWakeRetry) {
+                return CommandResult.Failed(ErrorKind.Unknown)
+            }
+            val wakeResult = wakeLocked()
+            if (wakeResult is CommandResult.Failed) {
+                wakeResult
+            } else {
+                executeAndHandle(command, allowWakeRetry = false)
+            }
+        } catch (e: AuthExpiredException) {
+            emitError(ErrorKind.AuthExpired)
+            CommandResult.Failed(ErrorKind.AuthExpired)
+        } catch (e: FleetHttpException) {
+            CommandResult.Failed(ErrorKind.Unknown)
+        } catch (e: FleetPartialDataException) {
+            CommandResult.Failed(ErrorKind.Unknown)
+        } catch (e: Exception) {
+            CommandResult.Failed(ErrorKind.Unknown)
+        }
+    }
 }

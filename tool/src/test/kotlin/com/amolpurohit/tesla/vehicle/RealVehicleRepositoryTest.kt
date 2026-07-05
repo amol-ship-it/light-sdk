@@ -78,6 +78,25 @@ class RealVehicleRepositoryTest {
         }
     }
 
+    /**
+     * Scriptable [CommandExecutor] fake, standing in for [SignedCommandService]: records every
+     * [VehicleCommand] it receives (so tests can assert what reached it) and returns results
+     * from [resultScript] one at a time (repeats the last entry once exhausted), or throws if
+     * the next scripted entry is an exception.
+     */
+    private class FakeCommandExecutor(
+        private val resultScript: MutableList<() -> CommandResult> = mutableListOf({ CommandResult.Success }),
+    ) : CommandExecutor {
+        val receivedCommands = mutableListOf<VehicleCommand>()
+        val callCount get() = receivedCommands.size
+
+        override suspend fun execute(vehicleId: String, command: VehicleCommand): CommandResult {
+            receivedCommands += command
+            val next = if (resultScript.size == 1) resultScript[0] else resultScript.removeAt(0)
+            return next()
+        }
+    }
+
     private fun sampleState(battery: Int = 72) = VehicleState(
         batteryPercent = battery,
         rangeKm = 340.0,
@@ -110,6 +129,7 @@ class RealVehicleRepositoryTest {
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 5_000L },
+            commands = FakeCommandExecutor(),
         )
 
         repo.start()
@@ -133,6 +153,7 @@ class RealVehicleRepositoryTest {
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 5_000L },
+            commands = FakeCommandExecutor(),
         )
 
         repo.start()
@@ -153,6 +174,7 @@ class RealVehicleRepositoryTest {
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 9_999L },
+            commands = FakeCommandExecutor(),
         )
         repo.start()
         runCurrent()
@@ -188,6 +210,7 @@ class RealVehicleRepositoryTest {
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 3_000L },
+            commands = FakeCommandExecutor(),
         )
         repo.start()
         runCurrent()
@@ -218,6 +241,7 @@ class RealVehicleRepositoryTest {
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 20_000L },
+            commands = FakeCommandExecutor(),
         )
         repo.start()
         runCurrent()
@@ -250,6 +274,7 @@ class RealVehicleRepositoryTest {
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 999_999L },
+            commands = FakeCommandExecutor(),
         )
         repo.start()
         runCurrent()
@@ -281,6 +306,7 @@ class RealVehicleRepositoryTest {
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 4_000L },
+            commands = FakeCommandExecutor(),
         )
         repo.start()
         runCurrent()
@@ -308,6 +334,7 @@ class RealVehicleRepositoryTest {
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 4_400L },
+            commands = FakeCommandExecutor(),
         )
         repo.start()
         runCurrent()
@@ -336,6 +363,7 @@ class RealVehicleRepositoryTest {
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 4_800L },
+            commands = FakeCommandExecutor(),
         )
         repo.start()
         runCurrent()
@@ -363,6 +391,7 @@ class RealVehicleRepositoryTest {
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 5_500L },
+            commands = FakeCommandExecutor(),
         )
         repo.start()
         runCurrent()
@@ -395,6 +424,7 @@ class RealVehicleRepositoryTest {
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 6_000L },
+            commands = FakeCommandExecutor(),
         )
         repo.start()
         runCurrent()
@@ -407,26 +437,212 @@ class RealVehicleRepositoryTest {
     }
 
     @Test
-    fun `command methods return Rejected not-yet-supported`() = runTest {
+    fun `command methods delegate the right VehicleCommand to the executor`() = runTest {
         val store = InMemoryKeyValueStore()
-        val api = FakeFleetApi()
+        val api = FakeFleetApi(vehicleDataScript = mutableListOf({ sampleState() }))
+        val executor = FakeCommandExecutor()
         val repo = RealVehicleRepository(
             api = api,
             cache = StateCache(store),
             vehicleId = vehicleId,
             scope = backgroundScope,
             nowMs = { 0L },
+            commands = executor,
         )
+        repo.start()
+        runCurrent()
 
-        val lockResult = repo.lock()
-        val chargeLimitResult = repo.setChargeLimit(80)
-        val ventResult = repo.ventWindows()
+        repo.lock()
+        repo.unlock()
+        repo.startCharging()
+        repo.stopCharging()
+        repo.setChargeLimit(80)
+        repo.setChargeAmps(16)
+        repo.setClimateOn(true)
+        repo.setClimateOn(false)
+        repo.setTargetTemp(21.5)
+        repo.setOverheatProtection(OverheatProtectionMode.Ac)
+        repo.setDogMode(true)
+        repo.ventWindows()
+        repo.closeWindows()
 
-        assertIs<CommandResult.Rejected>(lockResult)
-        assertEquals("Not yet supported in this build", lockResult.reason)
-        assertIs<CommandResult.Rejected>(chargeLimitResult)
-        assertEquals("Not yet supported in this build", chargeLimitResult.reason)
-        assertIs<CommandResult.Rejected>(ventResult)
-        assertEquals("Not yet supported in this build", ventResult.reason)
+        assertEquals(
+            listOf(
+                VehicleCommand.Lock,
+                VehicleCommand.Unlock,
+                VehicleCommand.StartCharging,
+                VehicleCommand.StopCharging,
+                VehicleCommand.SetChargeLimit(80),
+                VehicleCommand.SetChargeAmps(16),
+                VehicleCommand.ClimateOn,
+                VehicleCommand.ClimateOff,
+                VehicleCommand.SetTemp(21.5f),
+                VehicleCommand.SetOverheatProtection(OverheatProtectionMode.Ac),
+                VehicleCommand.SetDogMode(true),
+                VehicleCommand.VentWindows,
+                VehicleCommand.CloseWindows,
+            ),
+            executor.receivedCommands,
+        )
+    }
+
+    @Test
+    fun `command against asleep vehicle wakes first then executes`() = runTest {
+        val store = InMemoryKeyValueStore()
+        val cached = sampleState(battery = 30)
+        StateCache(store).save(cached, 1_000L)
+
+        val woken = sampleState(battery = 65)
+        val api = FakeFleetApi(
+            vehicleDataScript = mutableListOf({ throw VehicleAsleepException() }, { woken }, { woken }),
+            summaryStatesScript = mutableListOf("asleep", "online"),
+        )
+        val executor = FakeCommandExecutor()
+        val repo = RealVehicleRepository(
+            api = api,
+            cache = StateCache(store),
+            vehicleId = vehicleId,
+            scope = backgroundScope,
+            nowMs = { 20_000L },
+            commands = executor,
+        )
+        repo.start()
+        runCurrent()
+
+        // First put the repository into the Asleep state (mirrors what a real poll would do).
+        repo.refresh()
+        assertIs<VehicleUiState.Asleep>(repo.state.value)
+        assertEquals(0, api.wakeUpCount)
+
+        val result = repo.lock()
+
+        assertEquals(CommandResult.Success, result)
+        assertEquals(1, api.wakeUpCount)
+        assertEquals(1, executor.callCount)
+        assertEquals(VehicleCommand.Lock, executor.receivedCommands.single())
+
+        val state = repo.state.value
+        assertIs<VehicleUiState.Ready>(state)
+        assertEquals(woken, state.state)
+    }
+
+    @Test
+    fun `wake failure before command returns Failed WakeTimeout without executing`() = runTest {
+        val store = InMemoryKeyValueStore()
+        val cached = sampleState(battery = 25)
+        StateCache(store).save(cached, 1_000L)
+
+        val api = FakeFleetApi(
+            vehicleDataScript = mutableListOf({ throw VehicleAsleepException() }),
+            summaryStatesScript = mutableListOf("asleep"),
+        )
+        val executor = FakeCommandExecutor()
+        val repo = RealVehicleRepository(
+            api = api,
+            cache = StateCache(store),
+            vehicleId = vehicleId,
+            scope = backgroundScope,
+            nowMs = { 999_999L },
+            commands = executor,
+        )
+        repo.start()
+        runCurrent()
+
+        repo.refresh()
+        assertIs<VehicleUiState.Asleep>(repo.state.value)
+
+        val result = repo.lock()
+
+        assertIs<CommandResult.Failed>(result)
+        assertEquals(ErrorKind.WakeTimeout, result.kind)
+        assertEquals(0, executor.callCount)
+
+        val state = repo.state.value
+        assertIs<VehicleUiState.Error>(state)
+        assertEquals(ErrorKind.WakeTimeout, state.kind)
+    }
+
+    @Test
+    fun `successful command triggers exactly one vehicle_data refresh`() = runTest {
+        val store = InMemoryKeyValueStore()
+        val fresh = sampleState(battery = 88)
+        val api = FakeFleetApi(vehicleDataScript = mutableListOf({ fresh }))
+        val executor = FakeCommandExecutor()
+        val repo = RealVehicleRepository(
+            api = api,
+            cache = StateCache(store),
+            vehicleId = vehicleId,
+            scope = backgroundScope,
+            nowMs = { 12_000L },
+            commands = executor,
+        )
+        repo.start()
+        runCurrent()
+
+        val result = repo.lock()
+
+        assertEquals(CommandResult.Success, result)
+        assertEquals(1, api.vehicleDataCount)
+        val state = repo.state.value
+        assertIs<VehicleUiState.Ready>(state)
+        assertEquals(fresh, state.state)
+    }
+
+    @Test
+    fun `Rejected from executor propagates untouched`() = runTest {
+        val store = InMemoryKeyValueStore()
+        val api = FakeFleetApi()
+        val executor = FakeCommandExecutor(
+            resultScript = mutableListOf({ CommandResult.Rejected("Vehicle rejected the command") }),
+        )
+        val repo = RealVehicleRepository(
+            api = api,
+            cache = StateCache(store),
+            vehicleId = vehicleId,
+            scope = backgroundScope,
+            nowMs = { 13_000L },
+            commands = executor,
+        )
+        repo.start()
+        runCurrent()
+
+        val result = repo.lock()
+
+        assertIs<CommandResult.Rejected>(result)
+        assertEquals("Vehicle rejected the command", result.reason)
+        // No refresh should follow a Rejected outcome.
+        assertEquals(0, api.vehicleDataCount)
+    }
+
+    @Test
+    fun `AuthExpiredException from executor maps to Failed AuthExpired and Error state`() = runTest {
+        val store = InMemoryKeyValueStore()
+        val cached = sampleState(battery = 44)
+        StateCache(store).save(cached, 1_400L)
+
+        val api = FakeFleetApi()
+        val executor = FakeCommandExecutor(
+            resultScript = mutableListOf({ throw AuthExpiredException("expired") }),
+        )
+        val repo = RealVehicleRepository(
+            api = api,
+            cache = StateCache(store),
+            vehicleId = vehicleId,
+            scope = backgroundScope,
+            nowMs = { 14_000L },
+            commands = executor,
+        )
+        repo.start()
+        runCurrent()
+
+        val result = repo.lock()
+
+        assertIs<CommandResult.Failed>(result)
+        assertEquals(ErrorKind.AuthExpired, result.kind)
+
+        val state = repo.state.value
+        assertIs<VehicleUiState.Error>(state)
+        assertEquals(ErrorKind.AuthExpired, state.kind)
+        assertEquals(cached, state.cached)
     }
 }

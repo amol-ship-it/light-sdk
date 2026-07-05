@@ -33,7 +33,7 @@ class SignedCommandService(
     private val vin: String,
     private val nowMs: () -> Long,
     private val uuidSource: () -> ByteArray,
-) {
+) : CommandExecutor {
     // One routing address per client install would be more realistic, but nothing in the
     // protocol requires it to be stable across sessions/domains; a fixed 16-byte value
     // (distinct from Tesla's own vendored test fixtures' address) is sufficient here.
@@ -47,7 +47,7 @@ class SignedCommandService(
     // (both cleared together on re-handshake since sessions[domain] is replaced above).
     private val handshakeAtMs = mutableMapOf<VcpDomain, Long>()
 
-    suspend fun execute(vehicleId: String, command: VehicleCommand): CommandResult {
+    override suspend fun execute(vehicleId: String, command: VehicleCommand): CommandResult {
         return mutex.withLock {
             val session = sessionFor(vehicleId, command.domain)
                 ?: return@withLock CommandResult.Failed(ErrorKind.KeyNotEnrolled)
