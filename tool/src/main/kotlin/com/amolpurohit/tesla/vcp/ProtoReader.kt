@@ -21,6 +21,9 @@ class ProtoReader(private val bytes: ByteArray) {
                 2 -> {
                     // length-delimited
                     val length = readVarint().toInt()
+                    if (length < 0 || pos + length > bytes.size) {
+                        throw IllegalArgumentException("Malformed: length-delimited field exceeds message bounds")
+                    }
                     val data = ByteArray(length)
                     for (i in 0 until length) {
                         data[i] = bytes[pos++]
@@ -55,6 +58,9 @@ class ProtoReader(private val bytes: ByteArray) {
     }
 
     private fun read64Bit(): Long {
+        if (pos + 8 > bytes.size) {
+            throw IllegalArgumentException("Malformed: truncated 64-bit field")
+        }
         var result = 0L
         for (i in 0 until 8) {
             result = result or ((bytes[pos++].toInt() and 0xFF).toLong() shl (8 * i))
@@ -63,6 +69,9 @@ class ProtoReader(private val bytes: ByteArray) {
     }
 
     private fun read32Bit(): Long {
+        if (pos + 4 > bytes.size) {
+            throw IllegalArgumentException("Malformed: truncated 32-bit field")
+        }
         var result = 0L
         for (i in 0 until 4) {
             result = result or ((bytes[pos++].toInt() and 0xFF).toLong() shl (8 * i))

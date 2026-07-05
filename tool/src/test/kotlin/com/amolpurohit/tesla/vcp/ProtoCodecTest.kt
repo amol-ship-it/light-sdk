@@ -290,4 +290,43 @@ class ProtoCodecTest {
             reader.forEachField { _, _, _ -> }
         }
     }
+
+    @Test
+    fun `truncated length-delimited throws exception`() {
+        // field 1, wire type 2 = 0x0A, length varint 10, but only 2 payload bytes
+        val encoded = byteArrayOf(
+            0x0A.toByte(), 0x0A.toByte(), 0x01.toByte(), 0x02.toByte()
+        )
+
+        val reader = ProtoReader(encoded)
+        assertFailsWith<IllegalArgumentException> {
+            reader.forEachField { _, _, _ -> }
+        }
+    }
+
+    @Test
+    fun `truncated fixed32 throws exception`() {
+        // field 1, wire type 5 = 0x0D, then only 2 bytes (need 4)
+        val encoded = byteArrayOf(
+            0x0D.toByte(), 0x78.toByte(), 0x56.toByte()
+        )
+
+        val reader = ProtoReader(encoded)
+        assertFailsWith<IllegalArgumentException> {
+            reader.forEachField { _, _, _ -> }
+        }
+    }
+
+    @Test
+    fun `truncated fixed64 throws exception`() {
+        // field 1, wire type 1 = 0x09, then only 3 bytes (need 8)
+        val encoded = byteArrayOf(
+            0x09.toByte(), 0x11.toByte(), 0x22.toByte(), 0x33.toByte()
+        )
+
+        val reader = ProtoReader(encoded)
+        assertFailsWith<IllegalArgumentException> {
+            reader.forEachField { _, _, _ -> }
+        }
+    }
 }
