@@ -47,4 +47,5 @@ bin/
 .claude/
 
 ### Tesla VCP fixture harness ###
-scripts/tesla/vcp-fixtures/upstreamscripts/tesla/vcp-fixtures/fixturegen
+scripts/tesla/vcp-fixtures/upstream/
+scripts/tesla/vcp-fixtures/fixturegen
