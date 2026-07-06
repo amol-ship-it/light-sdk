@@ -49,3 +49,7 @@ bin/
 ### Tesla VCP fixture harness ###
 scripts/tesla/vcp-fixtures/upstream/
 scripts/tesla/vcp-fixtures/fixturegen
+
+### Tesla owner-side setup keys (never commit) ###
+scripts/tesla/setup/*.pem
+scripts/tesla/setup/__pycache__/

@@ -53,4 +53,34 @@ class SetupPayloadTest {
         assertEquals("payload too large", invalid.reason)
         assertTrue(elapsedMs < 2_000, "expected early abort, took ${elapsedMs}ms")
     }
+
+    // Cross-implementation seam: this exact string is the captured stdout of
+    // `python3 scripts/tesla/setup/login.py --selftest`, which encodes a fixed
+    // canned payload (JSON -> raw deflate nowrap -> base64url no padding) with
+    // no OAuth/network/QR involved. If login.py's encoder and this Kotlin
+    // decoder ever disagree on the wire format, this test fails first.
+    private val PYTHON_SELFTEST_ENCODED =
+        "lY9Ba4NAEIX_SthzDC300kAOG50YiZpGTWlBkK0Z08V1167btKH0v3e1Sckhlz4YmJn3wZv5IgcyvR0TjZXG7rUwqkZJpqRDURnsjHMynMFwbqzImJSCozQF312Sv0vHLv" +
+            "-ADkuN5gp0MvrcPVd9oGR22qmG8cv4CX6yphU4KVVj_VbzAzNY1Hi0kNNrDn4Qj8AdPSTBI81gtILnwchltCxdugEI5imEiwzSbEFXYP3IcklAw3idJUBDb22bbQpPgxRVvuu" +
+            "--Wl0d59L-gFLtd14mz2FitXYvr8IXtr8xt6hOROV0udjlRRHqQzTyIQleryvXJ67_9ZslsvhF4i96y-S7x8"
+
+    @Test fun `python login-py selftest encoding decodes end-to-end`() {
+        val result = SetupPayload.fromScans(listOf(PYTHON_SELFTEST_ENCODED))
+        val complete = assertIs<SetupPayload.Complete>(result)
+        assertEquals(
+            SetupPayload(
+                refreshToken = "selftest-refresh-token-0000",
+                clientId = "selftest-client-id",
+                clientSecret = "selftest-client-secret",
+                region = "na",
+                privateKey = "-----BEGIN EC PRIVATE KEY-----\n" +
+                    "MHcCAQEEIBSELFTESTFAKEKEYMATERIALNOTREALDONOTUSEXXXXXXoAoGCCqGSM49\n" +
+                    "AwEHoUQDQgAEfakepublickeymaterialforselftestonlynotarealkeyfakefake\n" +
+                    "fakefakefakefakefakefakefakefakefakefakefakefakefakefake==\n" +
+                    "-----END EC PRIVATE KEY-----\n",
+                domain = "selftest.example.com",
+            ),
+            complete.payload,
+        )
+    }
 }
