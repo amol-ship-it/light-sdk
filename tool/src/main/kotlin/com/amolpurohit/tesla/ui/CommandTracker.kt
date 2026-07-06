@@ -53,12 +53,9 @@ data class TrackedError<C>(val command: C, val message: String)
 fun <C> TrackedError<C>?.messageFor(command: C): String? =
     this?.takeIf { it.command == command }?.message
 
-/** Short human strings (spec §8); Task 26 polishes copy later. */
-fun errorMessage(kind: ErrorKind): String = when (kind) {
-    ErrorKind.Offline -> "No connection"
-    ErrorKind.AuthExpired -> "Sign-in expired"
-    ErrorKind.KeyNotEnrolled -> "Key not enrolled"
-    ErrorKind.RateLimited -> "Try again later"
-    ErrorKind.WakeTimeout -> "Car didn't wake"
-    ErrorKind.Unknown -> "Something went wrong"
-}
+/**
+ * Delegates to [ErrorCopy] — the single source of copy (Task 26) — so
+ * per-button errors ([CommandTracker.launch]) and whole-screen `Error`
+ * branches never diverge in wording.
+ */
+fun errorMessage(kind: ErrorKind): String = ErrorCopy.errorMessage(kind)

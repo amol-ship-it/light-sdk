@@ -1,13 +1,17 @@
 package com.amolpurohit.tesla.ui
 
 import com.amolpurohit.tesla.auth.CredentialStore
+import com.amolpurohit.tesla.auth.SelectedVehicle
 import com.amolpurohit.tesla.auth.SetupPayload
 import com.amolpurohit.tesla.fleet.FleetApi
 import com.amolpurohit.tesla.fleet.FleetOfflineException
 import com.amolpurohit.tesla.fleet.SignedCommandResponse
 import com.amolpurohit.tesla.fleet.VehicleSummary
 import com.amolpurohit.tesla.store.InMemoryKeyValueStore
+import com.amolpurohit.tesla.vehicle.CommandResult
+import com.amolpurohit.tesla.vehicle.ErrorKind
 import com.amolpurohit.tesla.vehicle.VehicleState
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -56,10 +60,25 @@ class SetupScreenViewModelTest {
 
     private val sampleVehicle = VehicleSummary(id = "v1", vin = "VIN1", name = "Model 3", state = "online")
 
+    /** Scriptable [KeyVerifier] fake: a fixed result, or a latch the test controls. */
+    private class FakeKeyVerifier(private val result: suspend () -> CommandResult) : KeyVerifier {
+        var callCount = 0
+            private set
+
+        override suspend fun verifyKey(): CommandResult {
+            callCount++
+            return result()
+        }
+    }
+
+    private val defaultKeyVerifierFactory: (SetupPayload, SelectedVehicle) -> KeyVerifier =
+        { _, _ -> FakeKeyVerifier { CommandResult.Success } }
+
     private fun vm(
         store: InMemoryKeyValueStore = InMemoryKeyValueStore(),
         apiFactory: (SetupPayload) -> FleetApi = { FakeFleetApi() },
-    ) = SetupScreenViewModel(CredentialStore(store), apiFactory)
+        keyVerifierFactory: (SetupPayload, SelectedVehicle) -> KeyVerifier = defaultKeyVerifierFactory,
+    ) = SetupScreenViewModel(CredentialStore(store), apiFactory, keyVerifierFactory)
 
     @Test fun `single valid scan persists credentials then lists vehicles`() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
@@ -73,7 +92,7 @@ class SetupScreenViewModelTest {
                 credentialsPresentAtListTime = credentials.load() != null
                 listOf(sampleVehicle)
             })
-            val viewModel = SetupScreenViewModel(credentials, apiFactory = { api })
+            val viewModel = SetupScreenViewModel(credentials, apiFactory = { api }, defaultKeyVerifierFactory)
 
             assertIs<SetupStep.Scanning>(viewModel.step.value)
             viewModel.onScan(encode(validJson))
@@ -137,7 +156,7 @@ class SetupScreenViewModelTest {
             val store = InMemoryKeyValueStore()
             val credentials = CredentialStore(store)
             val api = FakeFleetApi(vehiclesResult = { listOf(sampleVehicle) })
-            val viewModel = SetupScreenViewModel(credentials, apiFactory = { api })
+            val viewModel = SetupScreenViewModel(credentials, apiFactory = { api }, defaultKeyVerifierFactory)
 
             viewModel.onScan(encode(validJson))
             advanceUntilIdle()
@@ -190,6 +209,135 @@ class SetupScreenViewModelTest {
             advanceUntilIdle()
 
             assertIs<SetupStep.Failed>(viewModel.step.value)
+        } finally { Dispatchers.resetMain() }
+    }
+
+    // ---- verify-key (Task 26) ----
+
+    private val domainJson =
+        """{"v":1,"refresh_token":"rt","client_id":"cid","region":"na","private_key":"pk","domain":"abc123.example.com"}"""
+
+    private fun kotlinx.coroutines.test.TestScope.pickedVm(
+        json: String = domainJson,
+        keyVerifierFactory: (SetupPayload, SelectedVehicle) -> KeyVerifier,
+    ): SetupScreenViewModel {
+        val api = FakeFleetApi(vehiclesResult = { listOf(sampleVehicle) })
+        val viewModel = vm(apiFactory = { api }, keyVerifierFactory = keyVerifierFactory)
+        viewModel.onScan(encode(json))
+        advanceUntilIdle()
+        viewModel.pick(sampleVehicle)
+        advanceUntilIdle()
+        assertIs<SetupStep.Done>(viewModel.step.value)
+        return viewModel
+    }
+
+    @Test fun `verifyKey success shows Key enrolled`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val viewModel = pickedVm(keyVerifierFactory = { _, _ -> FakeKeyVerifier { CommandResult.Success } })
+
+            viewModel.verifyKey()
+            advanceUntilIdle()
+
+            assertIs<VerifyKeyResult.Enrolled>(viewModel.verifyResult.value)
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `verifyKey shows verifying state while in flight`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val gate = CompletableDeferred<Unit>()
+            val viewModel = pickedVm(
+                keyVerifierFactory = { _, _ ->
+                    FakeKeyVerifier {
+                        gate.await()
+                        CommandResult.Success
+                    }
+                },
+            )
+
+            viewModel.verifyKey()
+            assertTrue(viewModel.verifying.value, "expected verifying=true immediately after tapping Verify key")
+
+            gate.complete(Unit)
+            advanceUntilIdle()
+            assertTrue(!viewModel.verifying.value)
+            assertIs<VerifyKeyResult.Enrolled>(viewModel.verifyResult.value)
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `verifyKey KeyNotEnrolled shows the _ak URL built from payload domain`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val viewModel = pickedVm(
+                keyVerifierFactory = { _, _ -> FakeKeyVerifier { CommandResult.Failed(ErrorKind.KeyNotEnrolled) } },
+            )
+
+            viewModel.verifyKey()
+            advanceUntilIdle()
+
+            val result = viewModel.verifyResult.value
+            assertIs<VerifyKeyResult.NotEnrolled>(result)
+            assertEquals("tesla.com/_ak/abc123.example.com", result.url)
+            assertTrue(result.instructions.contains("official Tesla app"))
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `verifyKey KeyNotEnrolled with null domain shows Unavailable`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val noDomainJson = """{"v":1,"refresh_token":"rt","client_id":"cid","region":"na","private_key":"pk"}"""
+            val viewModel = pickedVm(
+                json = noDomainJson,
+                keyVerifierFactory = { _, _ -> FakeKeyVerifier { CommandResult.Failed(ErrorKind.KeyNotEnrolled) } },
+            )
+
+            viewModel.verifyKey()
+            advanceUntilIdle()
+
+            val result = viewModel.verifyResult.value
+            assertIs<VerifyKeyResult.Unavailable>(result)
+            assertTrue(result.message.contains("login.py"))
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `verifyKey other Failed shows generic retryable message`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            val viewModel = pickedVm(
+                keyVerifierFactory = { _, _ -> FakeKeyVerifier { CommandResult.Failed(ErrorKind.Offline) } },
+            )
+
+            viewModel.verifyKey()
+            advanceUntilIdle()
+
+            val result = viewModel.verifyResult.value
+            assertIs<VerifyKeyResult.Retryable>(result)
+            assertEquals(ErrorCopy.errorMessage(ErrorKind.Offline), result.message)
+        } finally { Dispatchers.resetMain() }
+    }
+
+    @Test fun `verifyKey can be retried after a retryable failure`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        try {
+            var attempts = 0
+            val viewModel = pickedVm(
+                keyVerifierFactory = { _, _ ->
+                    FakeKeyVerifier {
+                        attempts++
+                        if (attempts == 1) CommandResult.Failed(ErrorKind.Offline) else CommandResult.Success
+                    }
+                },
+            )
+
+            viewModel.verifyKey()
+            advanceUntilIdle()
+            assertIs<VerifyKeyResult.Retryable>(viewModel.verifyResult.value)
+
+            viewModel.verifyKey()
+            advanceUntilIdle()
+            assertIs<VerifyKeyResult.Enrolled>(viewModel.verifyResult.value)
+            assertEquals(2, attempts)
         } finally { Dispatchers.resetMain() }
     }
 }

@@ -55,6 +55,34 @@ class SignedCommandService(
         }
     }
 
+    /**
+     * Handshake-ONLY check that the client key is enrolled (approved on the
+     * vehicle's whitelist) — never sends a real lock/unlock/etc. command.
+     * Used by [com.amolpurohit.tesla.ui.SetupScreenViewModel]'s "Verify key"
+     * button (Task 26). Infotainment is used as the probe domain: both
+     * domains key-enroll together in practice (VCP whitelist entries are
+     * per-vehicle, not per-domain), and Infotainment is already the domain
+     * every non-lock command in this app uses.
+     *
+     * Reuses [sessionFor], so a session already cached for Infotainment
+     * (e.g. from a prior command in this process) is NOT re-handshaked —
+     * its mere presence already proves the key is enrolled.
+     */
+    suspend fun verifyKey(vehicleId: String): CommandResult {
+        return mutex.withLock {
+            try {
+                val session = sessionFor(vehicleId, VcpDomain.INFOTAINMENT)
+                if (session == null) CommandResult.Failed(ErrorKind.KeyNotEnrolled) else CommandResult.Success
+            } catch (e: AuthExpiredException) {
+                throw e
+            } catch (e: FleetOfflineException) {
+                CommandResult.Failed(ErrorKind.Offline)
+            } catch (e: RateLimitedException) {
+                CommandResult.Failed(ErrorKind.RateLimited)
+            }
+        }
+    }
+
     /** Must be called while holding [mutex]. */
     private suspend fun executeLocked(
         vehicleId: String,

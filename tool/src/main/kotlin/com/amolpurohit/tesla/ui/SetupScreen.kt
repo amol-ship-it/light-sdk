@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.lifecycle.viewModelScope
 import com.amolpurohit.tesla.Graph
 import com.amolpurohit.tesla.auth.CredentialStore
+import com.amolpurohit.tesla.auth.SelectedVehicle
 import com.amolpurohit.tesla.auth.SetupPayload
 import com.amolpurohit.tesla.auth.TokenManager
 import com.amolpurohit.tesla.fleet.FleetApi
@@ -26,6 +27,10 @@ import com.amolpurohit.tesla.fleet.FleetClient
 import com.amolpurohit.tesla.fleet.VehicleSummary
 import com.amolpurohit.tesla.store.DataStoreKeyValueStore
 import com.amolpurohit.tesla.ui.components.CommandButton
+import com.amolpurohit.tesla.vcp.ClientKeys
+import com.amolpurohit.tesla.vehicle.CommandResult
+import com.amolpurohit.tesla.vehicle.ErrorKind
+import com.amolpurohit.tesla.vehicle.SignedCommandService
 import com.thelightphone.sdk.LightQrCodeScanner
 import com.thelightphone.sdk.LightScreen
 import com.thelightphone.sdk.LightViewModel
@@ -57,20 +62,46 @@ sealed interface SetupStep {
 }
 
 /**
+ * Narrow seam over [SignedCommandService.verifyKey] so [SetupScreenViewModel]
+ * (and its tests) don't depend on the concrete signing/session-handshake
+ * stack — only on "check whether this vehicle's client key is enrolled."
+ */
+interface KeyVerifier {
+    suspend fun verifyKey(): CommandResult
+}
+
+/** Outcome of a "Verify key" tap (Task 26), rendered by [SetupScreen]'s `Done` step. */
+sealed interface VerifyKeyResult {
+    data object Enrolled : VerifyKeyResult
+    data class NotEnrolled(val url: String, val instructions: String) : VerifyKeyResult
+    data class Unavailable(val message: String) : VerifyKeyResult
+    data class Retryable(val message: String) : VerifyKeyResult
+}
+
+/**
  * Drives the QR scan -> credential persist -> vehicle list -> pick flow.
  *
  * [apiFactory] builds a [FleetApi] scoped to the just-decoded [SetupPayload] (its region
- * selects the Fleet API base URL); production wiring is in [SetupScreen.createViewModel].
+ * selects the Fleet API base URL); [keyVerifierFactory] builds a [KeyVerifier] scoped to the
+ * payload and the just-picked vehicle. Production wiring for both is in
+ * [SetupScreen.createViewModel].
  *
  * Never logs or stringifies [SetupPayload] — it carries the refresh token and private key.
  */
 class SetupScreenViewModel(
     private val credentials: CredentialStore,
     private val apiFactory: (SetupPayload) -> FleetApi,
+    private val keyVerifierFactory: (SetupPayload, SelectedVehicle) -> KeyVerifier,
 ) : LightViewModel<Unit>() {
 
     private val _step = MutableStateFlow<SetupStep>(SetupStep.Scanning)
     val step: StateFlow<SetupStep> = _step.asStateFlow()
+
+    private val _verifying = MutableStateFlow(false)
+    val verifying: StateFlow<Boolean> = _verifying.asStateFlow()
+
+    private val _verifyResult = MutableStateFlow<VerifyKeyResult?>(null)
+    val verifyResult: StateFlow<VerifyKeyResult?> = _verifyResult.asStateFlow()
 
     // Raw scans accumulated for the current multi-part attempt. A Failed retry clears this and
     // starts over rather than trying to preserve partial multi-part progress across an invalid
@@ -82,9 +113,19 @@ class SetupScreenViewModel(
     // over the same client instead of constructing (and leaking) a fresh FleetClient per attempt.
     private var api: FleetApi? = null
 
+    // Retained after pick() so verifyKey() can build a KeyVerifier scoped to both — needed for
+    // the payload's domain (the _ak URL) and the vehicle's id/vin (the handshake target).
+    private var pickedPayload: SetupPayload? = null
+    private var pickedVehicle: SelectedVehicle? = null
+
+    // Built once on the first verifyKey() call and reused for retries, so repeated taps don't
+    // leak a fresh HTTP engine each time (mirrors the `api` field's one-client-per-payload rule).
+    private var keyVerifier: KeyVerifier? = null
+
     override fun onCleared() {
         super.onCleared()
         (api as? java.io.Closeable)?.close()
+        (keyVerifier as? java.io.Closeable)?.close()
     }
 
     fun onScan(text: String) {
@@ -110,6 +151,7 @@ class SetupScreenViewModel(
     }
 
     private fun persistAndListVehicles(payload: SetupPayload) {
+        pickedPayload = payload
         viewModelScope.launch {
             // Persist BEFORE listing: downstream wiring (Task 18) reads credentials from the
             // store, so they must be durable by the time PickingVehicle is entered.
@@ -144,6 +186,7 @@ class SetupScreenViewModel(
     fun pick(vehicle: VehicleSummary) {
         viewModelScope.launch {
             credentials.saveVehicle(id = vehicle.id, vin = vehicle.vin, name = vehicle.name)
+            pickedVehicle = SelectedVehicle(id = vehicle.id, vin = vehicle.vin, name = vehicle.name)
             _step.value = SetupStep.Done
             Graph.reset()
         }
@@ -157,6 +200,45 @@ class SetupScreenViewModel(
         } else {
             scans.clear()
             _step.value = SetupStep.Scanning
+        }
+    }
+
+    /**
+     * Handshake-only check that the picked vehicle's client key is enrolled
+     * (Task 26). Ignored if tapped before [pick] has recorded a vehicle/payload
+     * (shouldn't happen — the button only renders in [SetupStep.Done]) or while
+     * a previous verify is still in flight.
+     */
+    fun verifyKey() {
+        if (_verifying.value) return
+        val payload = pickedPayload ?: return
+        val vehicle = pickedVehicle ?: return
+
+        _verifying.value = true
+        viewModelScope.launch {
+            val verifier = keyVerifier ?: keyVerifierFactory(payload, vehicle).also { keyVerifier = it }
+            _verifyResult.value = when (val result = verifier.verifyKey()) {
+                is CommandResult.Success -> VerifyKeyResult.Enrolled
+                is CommandResult.Failed -> when (result.kind) {
+                    ErrorKind.KeyNotEnrolled -> {
+                        val domain = payload.domain
+                        if (domain == null) {
+                            VerifyKeyResult.Unavailable("Verify unavailable — re-run login.py to include your domain")
+                        } else {
+                            VerifyKeyResult.NotEnrolled(
+                                url = "tesla.com/_ak/$domain",
+                                instructions = "Open this once in the official Tesla app to approve the key.",
+                            )
+                        }
+                    }
+                    else -> VerifyKeyResult.Retryable(ErrorCopy.errorMessage(result.kind))
+                }
+                // CommandResult.Rejected is not a real possibility for a handshake-only
+                // check (SignedCommandService.verifyKey never returns it), but the sealed
+                // interface requires exhaustiveness — treat it the same as a generic retryable.
+                is CommandResult.Rejected -> VerifyKeyResult.Retryable(ErrorCopy.errorMessage(ErrorKind.Unknown))
+            }
+            _verifying.value = false
         }
     }
 }
@@ -178,6 +260,27 @@ class SetupScreen(sealedActivity: SealedLightActivity) :
                 val tokens = TokenManager(HttpClient(engine), credentials)
                 FleetClient(engine, tokens, payload.region)
             },
+            keyVerifierFactory = { payload, vehicle ->
+                // Contained, one-off wiring (mirrors Graph.buildRepository's SignedCommandService
+                // construction): this screen doesn't reuse Graph's memoized repo/HTTP engine since
+                // Setup can run before any repo exists, and verifyKey's handshake-only session
+                // isn't worth persisting past this screen.
+                val engine = OkHttp.create()
+                val tokens = TokenManager(HttpClient(engine), credentials)
+                val fleetApi = FleetClient(engine, tokens, payload.region)
+                val secureRandom = java.security.SecureRandom()
+                val commands = SignedCommandService(
+                    api = fleetApi,
+                    keys = ClientKeys.fromPem(payload.privateKey),
+                    vin = vehicle.vin,
+                    nowMs = System::currentTimeMillis,
+                    uuidSource = { ByteArray(16).also(secureRandom::nextBytes) },
+                )
+                object : KeyVerifier, java.io.Closeable {
+                    override suspend fun verifyKey(): CommandResult = commands.verifyKey(vehicle.id)
+                    override fun close() = fleetApi.close()
+                }
+            },
         )
     }
 
@@ -185,6 +288,8 @@ class SetupScreen(sealedActivity: SealedLightActivity) :
     override fun Content() {
         val themeColors by LightThemeController.colors.collectAsState()
         val step by viewModel.step.collectAsState()
+        val verifying by viewModel.verifying.collectAsState()
+        val verifyResult by viewModel.verifyResult.collectAsState()
 
         LightTheme(colors = themeColors) {
             Box(
@@ -275,11 +380,48 @@ class SetupScreen(sealedActivity: SealedLightActivity) :
                             Column(modifier = Modifier.fillMaxWidth().padding(top = 1f.gridUnitsAsDp())) {
                                 CommandButton(
                                     label = "Verify key",
-                                    pending = false,
-                                    enabled = false,
-                                    error = "Available after M4",
-                                    onClick = {},
+                                    pending = verifying,
+                                    enabled = !verifying,
+                                    onClick = viewModel::verifyKey,
                                 )
+                                when (val result = verifyResult) {
+                                    null -> Unit
+                                    is VerifyKeyResult.Enrolled -> {
+                                        LightText(
+                                            text = "Key enrolled ✓",
+                                            variant = LightTextVariant.Detail,
+                                            modifier = Modifier.padding(top = 0.25f.gridUnitsAsDp()),
+                                        )
+                                    }
+                                    is VerifyKeyResult.NotEnrolled -> {
+                                        LightText(
+                                            text = result.url,
+                                            variant = LightTextVariant.Detail,
+                                            modifier = Modifier.padding(top = 0.25f.gridUnitsAsDp()),
+                                        )
+                                        LightText(
+                                            text = result.instructions,
+                                            variant = LightTextVariant.Detail,
+                                            lighten = true,
+                                        )
+                                    }
+                                    is VerifyKeyResult.Unavailable -> {
+                                        LightText(
+                                            text = result.message,
+                                            variant = LightTextVariant.Detail,
+                                            lighten = true,
+                                            modifier = Modifier.padding(top = 0.25f.gridUnitsAsDp()),
+                                        )
+                                    }
+                                    is VerifyKeyResult.Retryable -> {
+                                        LightText(
+                                            text = result.message,
+                                            variant = LightTextVariant.Detail,
+                                            lighten = true,
+                                            modifier = Modifier.padding(top = 0.25f.gridUnitsAsDp()),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

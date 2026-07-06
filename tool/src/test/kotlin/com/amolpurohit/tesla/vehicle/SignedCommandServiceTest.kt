@@ -381,6 +381,83 @@ class SignedCommandServiceTest {
     }
 
     @Test
+    fun `verifyKey handshakes to Infotainment and succeeds without sending a command`() = runTest {
+        val api = FakeFleetApi(
+            responses = mutableListOf(
+                { handshakeOkResponse() },
+            ),
+        )
+        val svc = service(api)
+
+        val result = svc.verifyKey(vehicleId)
+
+        assertEquals(CommandResult.Success, result)
+        // Handshake only — no signed lock/unlock/etc. is ever sent.
+        assertEquals(1, api.signedCommandCount)
+        assertTrue(
+            !containsField13(Base64.getDecoder().decode(api.requests[0])),
+            "expected the only request to be the unsigned session-info-request",
+        )
+    }
+
+    @Test
+    fun `verifyKey maps whitelist-reject at handshake to Failed KeyNotEnrolled`() = runTest {
+        val api = FakeFleetApi(
+            responses = mutableListOf(
+                {
+                    val vehiclePublic = vehiclePublicKeyFromSessionResponseFixture()
+                    val epoch = ByteArray(16) { it.toByte() }
+                    val bytes = sessionInfoResponse(vehiclePublic, epoch, counter = 0L, clockTime = 0, status = 1)
+                    SignedCommandResponse(toB64(bytes))
+                },
+            ),
+        )
+        val svc = service(api)
+
+        val result = svc.verifyKey(vehicleId)
+
+        assertIs<CommandResult.Failed>(result)
+        assertEquals(ErrorKind.KeyNotEnrolled, result.kind)
+        assertEquals(1, api.signedCommandCount)
+    }
+
+    @Test
+    fun `verifyKey reuses an already-cached Infotainment session without re-handshaking`() = runTest {
+        val api = FakeFleetApi(
+            responses = mutableListOf(
+                { handshakeOkResponse() }, // Infotainment handshake (from StartCharging)
+                { SignedCommandResponse(toB64(successResponse())) }, // charge start
+            ),
+        )
+        val svc = service(api)
+
+        svc.execute(vehicleId, VehicleCommand.StartCharging)
+        val result = svc.verifyKey(vehicleId)
+
+        assertEquals(CommandResult.Success, result)
+        assertEquals(2, api.signedCommandCount) // no extra handshake call
+    }
+
+    @Test
+    fun `verifyKey maps offline transport error to Failed Offline`() = runTest {
+        val api = object : FleetApi {
+            override suspend fun listVehicles(): List<VehicleSummary> = emptyList()
+            override suspend fun vehicleSummary(id: String): VehicleSummary? = null
+            override suspend fun vehicleData(id: String) = error("not used")
+            override suspend fun wakeUp(id: String) {}
+            override suspend fun signedCommand(id: String, routableMessageB64: String): SignedCommandResponse {
+                throw com.amolpurohit.tesla.fleet.FleetOfflineException(java.io.IOException("boom"))
+            }
+        }
+        val svc = service(api)
+
+        val result = svc.verifyKey(vehicleId)
+
+        assertIs<CommandResult.Failed>(result)
+        assertEquals(ErrorKind.Offline, result.kind)
+    }
+
+    @Test
     fun `expiresAt reflects clock offset and elapsed wall time via injected clock`() = runTest {
         // Handshake at local t=1_000_000ms reports vehicle clockTime=100 (seconds).
         // A command signed at the same instant should compute expiresAt = 100 + 0 + 5 = 105.
