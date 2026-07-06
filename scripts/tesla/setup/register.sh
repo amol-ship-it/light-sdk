@@ -52,14 +52,24 @@ fi
 
 echo "Got partner token. Registering domain '$DOMAIN' with $FLEET_API_BASE/api/1/partner_accounts ..." >&2
 
-REGISTER_RESPONSE="$(curl -sS -X POST "$FLEET_API_BASE/api/1/partner_accounts" \
+BODY="$(python3 -c 'import json,sys; print(json.dumps({"domain": sys.argv[1]}))' "$DOMAIN")"
+
+HTTP_RESPONSE="$(curl -sS -w $'\n%{http_code}' -X POST "$FLEET_API_BASE/api/1/partner_accounts" \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \
-  -d "$(python3 -c 'import json,sys; print(json.dumps({"domain": sys.argv[1]}))' "$DOMAIN")")"
+  -d "$BODY")"
 
-echo "$REGISTER_RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$REGISTER_RESPONSE"
+HTTP_STATUS=$(printf '%s' "$HTTP_RESPONSE" | tail -n1)
+HTTP_BODY=$(printf '%s' "$HTTP_RESPONSE" | sed '$d')
+
+printf '%s\n' "$HTTP_BODY" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$HTTP_BODY"
+
+if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+  echo "ERROR: partner registration failed (HTTP $HTTP_STATUS)" >&2
+  exit 1
+fi
 
 echo
-echo "If this succeeded, Tesla now trusts $DOMAIN as your fleet application's key domain."
+echo "Partner registration succeeded — Tesla now trusts $DOMAIN as your fleet application's key domain."
 echo "Next step: run login.py --region $REGION --client-id \$CLIENT_ID --domain $DOMAIN ..."
 echo "to complete OAuth and produce the setup QR for the tool."

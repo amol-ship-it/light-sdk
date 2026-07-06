@@ -146,9 +146,12 @@ def run_oauth_flow(client_id: str, client_secret: str | None) -> str:
                 done.set()
                 return
             if q.get("state", [""])[0] != state:
+                result["error"] = "state mismatch (possible CSRF/replay)"
                 self.send_response(400)
+                self.send_header("Content-Type", "text/html")
                 self.end_headers()
-                self.wfile.write(b"state mismatch")
+                self.wfile.write(b"<h2>State mismatch &mdash; return to the terminal.</h2>")
+                done.set()
                 return
             result["code"] = q.get("code", [""])[0]
             self.send_response(200)
