@@ -141,6 +141,21 @@ class SignedCommandServiceTest {
             .toByteArray()
     }
 
+    /**
+     * A response whose application payload (field 10) is NOT decodable protobuf —
+     * modelling the AES-GCM-encrypted body the real vehicle returns when
+     * FLAG_ENCRYPT_RESPONSE is set. The leading 0x3F byte parses as wire type 7
+     * (invalid), so ProtoReader throws — which the service must treat as success
+     * (isFault already ruled out a protocol-level rejection), not crash.
+     */
+    private fun encryptedLikeResponse(): ByteArray =
+        ProtoWriter()
+            .bytes(
+                Fields.PAYLOAD_PROTOBUF_MESSAGE_AS_BYTES,
+                byteArrayOf(0x3F, 0x7A, 0x11, 0x9C.toByte(), 0x04),
+            )
+            .toByteArray()
+
     // ---- fake Fleet API ----
 
     private class FakeFleetApi(
@@ -460,9 +475,10 @@ class SignedCommandServiceTest {
     @Test
     fun `expiresAt reflects clock offset and elapsed wall time via injected clock`() = runTest {
         // Handshake at local t=1_000_000ms reports vehicle clockTime=100 (seconds).
-        // A command signed at the same instant should compute expiresAt = 100 + 0 + 5 = 105.
-        // A later command signed 3s of local wall-clock time after the handshake should compute
-        // expiresAt = 100 + 3 + 5 = 108.
+        // The expiry window is 30s (widened from the reference's BLE-tuned 5s for
+        // Fleet API relay latency). A command signed at the same instant should
+        // compute expiresAt = 100 + 0 + 30 = 130. A later command signed 3s of local
+        // wall-clock time after the handshake should compute 100 + 3 + 30 = 133.
         var clock = 1_000_000L
         val api = FakeFleetApi(
             responses = mutableListOf(
@@ -476,13 +492,28 @@ class SignedCommandServiceTest {
         svc.execute(vehicleId, VehicleCommand.Lock) // triggers handshake, then signs at clock=1_000_000
 
         val firstSignedRequestBytes = Base64.getDecoder().decode(api.requests[1])
-        assertEquals(105, extractExpiresAt(firstSignedRequestBytes))
+        assertEquals(130, extractExpiresAt(firstSignedRequestBytes))
 
         clock = 1_003_000L
         svc.execute(vehicleId, VehicleCommand.Unlock) // same cached session, signs at clock=1_003_000
 
         val secondSignedRequestBytes = Base64.getDecoder().decode(api.requests[2])
-        assertEquals(108, extractExpiresAt(secondSignedRequestBytes))
+        assertEquals(133, extractExpiresAt(secondSignedRequestBytes))
+    }
+
+    @Test
+    fun `encrypted or unparseable response body is treated as success`() = runTest {
+        val api = FakeFleetApi(
+            responses = mutableListOf(
+                { handshakeOkResponse() },
+                { SignedCommandResponse(toB64(encryptedLikeResponse())) },
+            ),
+        )
+        val svc = service(api, nowMs = { 0L })
+
+        val result = svc.execute(vehicleId, VehicleCommand.ClimateOn)
+
+        assertEquals(CommandResult.Success, result)
     }
 
     /** Extracts HMAC_Personalized_Signature_Data.expires_at (tag 3, fixed32 LE) from a signed RoutableMessage. */

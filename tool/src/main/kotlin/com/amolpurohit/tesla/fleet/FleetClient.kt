@@ -100,14 +100,18 @@ class FleetClient(
     }
 
     override suspend fun signedCommand(id: String, routableMessageB64: String): SignedCommandResponse {
-        val envelope: FleetEnvelope<SignedCommandResponseDto> = executeWithAuthRetry {
+        // The Fleet API returns the vehicle's reply as a base64 STRING directly in
+        // the envelope: {"response": "<base64 routable_message>"} — NOT a nested
+        // object. (Confirmed against the real vehicle; the earlier nested-object
+        // DTO caused a JsonConvertException at $.response on every command.)
+        val envelope: FleetEnvelope<String> = executeWithAuthRetry {
             client.post("$baseUrl/api/1/vehicles/$id/signed_command") {
                 header("Authorization", "Bearer $it")
                 contentType(ContentType.Application.Json)
                 setBody(RoutableMessageRequest(routableMessageB64))
             }
         }
-        val responseB64 = envelope.response?.response
+        val responseB64 = envelope.response
             ?: throw FleetPartialDataException("signed_command response envelope")
         return SignedCommandResponse(responseB64)
     }

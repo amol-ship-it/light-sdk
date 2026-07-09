@@ -228,7 +228,11 @@ class FleetClientTest {
         val engine = MockEngine { request ->
             capturedRequest = request
             respond(
-                """{"response": {"response": "base64payload=="}}""",
+                // The real Fleet API returns the vehicle reply as a base64 STRING
+                // directly in the envelope: {"response": "<b64>"} — NOT a nested
+                // object. (Verified against the real vehicle; the earlier nested
+                // shape here masked a JsonConvertException on every live command.)
+                """{"response": "base64payload=="}""",
                 HttpStatusCode.OK,
                 headersOf(HttpHeaders.ContentType, "application/json"),
             )

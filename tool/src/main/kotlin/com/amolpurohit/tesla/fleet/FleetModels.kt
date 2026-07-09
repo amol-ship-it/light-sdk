@@ -31,9 +31,6 @@ internal data class VehicleSummaryDto(
 )
 
 @Serializable
-internal data class SignedCommandResponseDto(val response: String? = null)
-
-@Serializable
 internal data class VehicleDataDto(
     val state: String? = null,
     @SerialName("charge_state") val chargeState: ChargeStateDto? = null,

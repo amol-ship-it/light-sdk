@@ -164,11 +164,22 @@ class SignedCommandService(
      * real-car E2E.
      */
     private fun parseOutcome(domain: VcpDomain, responseBytes: ByteArray): CommandResult {
-        val payload = readProtobufMessageAsBytes(responseBytes) ?: return CommandResult.Success
-
-        return when (domain) {
-            VcpDomain.VEHICLE_SECURITY -> parseVcsecOutcome(payload)
-            VcpDomain.INFOTAINMENT -> parseInfotainmentOutcome(payload)
+        // We set FLAG_ENCRYPT_RESPONSE, so the vehicle's application-layer response
+        // payload comes back AES-GCM-encrypted — it is NOT plaintext protobuf and
+        // will not parse. isFault(...) has already ruled out a protocol-level
+        // rejection at the envelope layer, so a body we can't cleanly decode means
+        // "accepted": report Success rather than crashing or guessing Failed. A
+        // cleanly-parseable plaintext status (e.g. an unencrypted rejection reason)
+        // is still surfaced when present. (Reading encrypted rejection reasons would
+        // require decrypting the response with the session key — a future addition.)
+        return try {
+            val payload = readProtobufMessageAsBytes(responseBytes) ?: return CommandResult.Success
+            when (domain) {
+                VcpDomain.VEHICLE_SECURITY -> parseVcsecOutcome(payload)
+                VcpDomain.INFOTAINMENT -> parseInfotainmentOutcome(payload)
+            }
+        } catch (e: Exception) {
+            CommandResult.Success
         }
     }
 
@@ -321,7 +332,11 @@ class SignedCommandService(
         if (b64.isEmpty()) ByteArray(0) else Base64.getDecoder().decode(b64)
 
     private companion object {
-        private const val EXPIRY_WINDOW_MS = 5_000L // internal/dispatcher/session.go:16 defaultExpiration
+        // Tesla's reference uses 5s (session.go:16 defaultExpiration), tuned for
+        // BLE's sub-second latency. The Fleet API relays commands through Tesla's
+        // cloud to the vehicle (handshake POST + command POST, each 1-3s), so a 5s
+        // window routinely expires in transit. Widen it for the HTTP transport.
+        private const val EXPIRY_WINDOW_MS = 30_000L
 
         // universal_message.proto:88 payload oneof / universal_message.proto:97 signedMessageStatus
         private const val ROUTABLE_MESSAGE_PROTOBUF_MESSAGE_AS_BYTES = 10

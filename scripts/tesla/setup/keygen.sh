@@ -20,9 +20,15 @@ if [ -f "$PRIVATE_KEY" ]; then
   esac
 fi
 
-openssl ecparam -name prime256v1 -genkey -noout -out "$PRIVATE_KEY"
+# Generate as SEC1 then convert to unencrypted PKCS#8. The tool loads the
+# private key via the JDK (PKCS8EncodedKeySpec in VcpCrypto, and ClientKeys'
+# DER walk for the public point) — a raw SEC1 "EC PRIVATE KEY" does NOT parse
+# there and crashes setup. PKCS#8 from openssl still embeds the public point,
+# which ClientKeys extracts for the signed command's signer identity.
+openssl ecparam -name prime256v1 -genkey -noout \
+  | openssl pkcs8 -topk8 -nocrypt -out "$PRIVATE_KEY"
 chmod 600 "$PRIVATE_KEY"
-openssl ec -in "$PRIVATE_KEY" -pubout -out "$PUBLIC_KEY" 2>/dev/null
+openssl pkey -in "$PRIVATE_KEY" -pubout -out "$PUBLIC_KEY" 2>/dev/null
 
 echo
 echo "Generated:"
