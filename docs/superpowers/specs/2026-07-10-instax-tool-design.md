@@ -38,7 +38,7 @@ tool/ (Kotlin, Compose, MVVM — same conventions as the weather example and Tes
 │                       connect → query info → print(jpeg) with progress events
 ├── transport/
 │   ├── InstaxTransport         interface: connect / write / notifications / close
-│   ├── TcpBridgeTransport      dev: length-prefixed frames to Mac bridge (10.0.2.2)
+│   ├── TcpBridgeTransport      dev: JSON-lines framing to Mac bridge (10.0.2.2)
 │   └── AndroidBleTransport     real: android.bluetooth, scan by service UUID;
 │                               compile-only/best-effort THIS milestone (no gate can
 │                               exercise it); keep it thin, don't over-invest
