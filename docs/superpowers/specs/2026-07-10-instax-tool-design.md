@@ -13,7 +13,9 @@ Minimal print flow only: browse photos, preview one, confirm, print, watch progr
 ## Constraints (verified 2026-07-10)
 
 1. **Bluetooth is not available to community tools.** `LightToolPolicy.ALLOWED_PERMISSIONS` (plugin/src/main/kotlin/com/thelightphone/plugin/LightToolMetadata.kt) contains no `BLUETOOTH_CONNECT`/`BLUETOOTH_SCAN`. With minSdk 33 these runtime permissions are mandatory for BLE. The new `builder/` pipeline enforces the same policy server-side.
+   **UPDATE (discovered during implementation, 2026-07-11):** it's stricter than permissions. The plugin's source scanner blocks `android.content.Context` imports, `getSystemService()`, and `contentResolver` in tool code entirely — `SealedLightContext` exposes only `dataStore`, `filesDir`, `fileShare`. So `android.bluetooth` is unusable by tools regardless of permissions (no way to obtain a Context or BluetoothManager). AndroidBleTransport was dropped from this milestone; the real upstream ask is an SDK-level BLE transport API, not just permission entries. The `InstaxTransport` seam is the plug-in point when that exists.
 2. **No photo-read access.** `READ_MEDIA_IMAGES` is not in the allow-list, and the SDK exposes no API to read the LightOS Album tool's photos (`LightServiceMethod` has no photo methods; `LightFileShare` is tool→LightOS only; the only Album trace in the SDK is the `SAVE_TO_ALBUM` icon).
+   **UPDATE (2026-07-11):** also stricter — the `contentResolver` block means MediaStore is unreachable for tools regardless of permissions. Photo source for this milestone: the tool's own `filesDir/photos/` directory, seeded via adb on the emulator (same run-as technique as the Tesla tool's DataStore seeding). Consequence: the tool needs NO extra permissions at all (INTERNET only), making this milestone fully policy-compliant. The `PhotoRepository` seam is unchanged; the dashboard-sync fallback (open question 1) is now the only plausible real-device photo path.
 3. **The Android emulator cannot reach a real BLE peripheral.** Emulator Bluetooth is virtual (netsim/rootcanal). Bridging to a physical adapter (Bumble + USB HCI dongle) is experimental and poorly supported on macOS.
 4. **Film is expensive** (~$1.30/sheet of instax WIDE). The default dev loop must consume zero film.
 
@@ -39,12 +41,13 @@ tool/ (Kotlin, Compose, MVVM — same conventions as the weather example and Tes
 ├── transport/
 │   ├── InstaxTransport         interface: connect / write / notifications / close
 │   ├── TcpBridgeTransport      dev: JSON-lines framing to Mac bridge (10.0.2.2)
-│   └── AndroidBleTransport     real: android.bluetooth, scan by service UUID;
-│                               compile-only/best-effort THIS milestone (no gate can
-│                               exercise it); keep it thin, don't over-invest
+│   └── (AndroidBleTransport — DROPPED: impossible under the tool sandbox,
+│        see constraint 1 update; future impl plugs into InstaxTransport
+│        when Light ships an SDK BLE API)
 ├── photos/
-│   ├── PhotoRepository             interface (list newest-first, load)
-│   └── MediaStorePhotoRepository   reads device images
+│   ├── PhotoRepository            interface (list newest-first, load)
+│   └── FilesDirPhotoRepository    reads JPEGs from the tool's filesDir/photos/
+│                                  (adb-seeded on the emulator; see constraint 2)
 ├── imaging/
 │   └── PrintImagePrep   EXIF rotation, portrait→landscape auto-rotate,
 │                        center-crop to 1260×840, JPEG quality ladder to ≤ 65,535 B

@@ -3,10 +3,11 @@ id = "com.thelightphone.instax"
 label = "Print"
 versionCode = 1
 versionName = "1.0"
+# INTERNET is all this milestone needs: the bridge transport is a TCP socket
+# and photos live in the tool's own files dir. (BLE/MediaStore turned out to be
+# impossible for tools regardless of permissions — the SDK plugin blocks
+# Context/getSystemService/contentResolver in tool code entirely.)
 permissions = [
-    "android.permission.BLUETOOTH_CONNECT",
-    "android.permission.BLUETOOTH_SCAN",
-    "android.permission.READ_MEDIA_IMAGES",
     "android.permission.INTERNET",
 ]
 # change if you run this on an LP3!
