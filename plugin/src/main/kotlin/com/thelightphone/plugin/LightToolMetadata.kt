@@ -143,6 +143,11 @@ object LightToolPolicy {
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.NFC",
+        // FORK-ONLY (instax-tool): not in upstream policy. Needed for the
+        // instax printing tool; see docs/superpowers/specs/2026-07-10-instax-tool-design.md
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.READ_MEDIA_IMAGES",
     )
 
     /**
@@ -159,6 +164,9 @@ object LightToolPolicy {
         "android.permission.ACCESS_FINE_LOCATION" to listOf("android.hardware.location.gps"),
         "android.permission.ACCESS_COARSE_LOCATION" to listOf("android.hardware.location.network"),
         "android.permission.NFC" to listOf("android.hardware.nfc"),
+        // FORK-ONLY (instax-tool), matching the entries above.
+        "android.permission.BLUETOOTH_CONNECT" to listOf("android.hardware.bluetooth"),
+        "android.permission.BLUETOOTH_SCAN" to listOf("android.hardware.bluetooth_le"),
     )
 }
 
