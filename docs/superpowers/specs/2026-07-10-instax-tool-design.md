@@ -40,7 +40,8 @@ tool/ (Kotlin, Compose, MVVM — same conventions as the weather example and Tes
 │   ├── InstaxTransport         interface: connect / write / notifications / close
 │   ├── TcpBridgeTransport      dev: length-prefixed frames to Mac bridge (10.0.2.2)
 │   └── AndroidBleTransport     real: android.bluetooth, scan by service UUID;
-│                               LP3-ready, exercised only when hardware access exists
+│                               compile-only/best-effort THIS milestone (no gate can
+│                               exercise it); keep it thin, don't over-invest
 ├── photos/
 │   ├── PhotoRepository             interface (list newest-first, load)
 │   └── MediaStorePhotoRepository   reads device images
@@ -49,9 +50,12 @@ tool/ (Kotlin, Compose, MVVM — same conventions as the weather example and Tes
 │                        center-crop to 1260×840, JPEG quality ladder to ≤ 65,535 B
 │                        (thin android.graphics wrapper; everything else JVM-testable)
 └── ui/     three screens (sdk-ui components: LightScrollView, LightBottomBar, …)
-    ├── Photos    photo list + printer status line (battery, prints left)
+    ├── Photos    photo list + printer status line (battery, prints left);
+    │             empty state when no photos ("No photos yet")
     ├── Preview   cropped preview, "Print — N sheets left" confirm (deliberate friction)
-    └── Progress  transferring % → printing → done/error; always reaches a terminal state
+    └── Progress  transferring % → printing → done/error; always reaches a terminal
+                  state; Cancel available during transfer (safe — abort before
+                  PRINT_IMAGE discards the upload, no film used)
 ```
 
 The transport seam is the same pattern as the Tesla tool's `CommandExecutor`: all protocol bytes are composed in Kotlin regardless of transport, so the dev loop exercises the code that will eventually run on the phone.
@@ -59,6 +63,8 @@ The transport seam is the same pattern as the Tesla tool's `CommandExecutor`: al
 ### Fork-only policy patch
 
 One clearly-labeled commit adds `BLUETOOTH_CONNECT`, `BLUETOOTH_SCAN`, `READ_MEDIA_IMAGES` to `ALLOWED_PERMISSIONS`. It stays isolated (never mixed into tool commits) so the tool itself remains upstream-clean. `lighttool.toml` declares those three permissions.
+
+These are runtime permissions on API 33+: the tool requests them through the SDK's mechanism (`LightServiceMethod.GetPermission` / `RequestPermissionComponent`, handled by `LightSdkPermissionActivity` on the emulator). If a permission is denied, the affected screen shows a plain explanation and a re-request affordance instead of an empty or broken state (Photos screen for `READ_MEDIA_IMAGES`; connect flow for the Bluetooth pair — the latter only matters on the `AndroidBleTransport` path).
 
 ### Mac bridge (`scripts/instax/bridge.py`)
 
@@ -71,6 +77,8 @@ Pick photo → `PrintImagePrep` → `InstaxSession.print()` streams chunks and e
 ## Error handling
 
 Consolidated `ErrorCopy`-style catalog (pattern proven in the Tesla tool). Cases: bridge unreachable ("Bridge not running — start scripts/instax/bridge.py"), no printer found, connection lost mid-transfer (safe to retry), printer-reported conditions (no film, cover open, low battery), image that cannot be encoded under the size cap. No spinner may hang: every async path times out into an error state.
+
+One case is special: connection lost **after `PRINT_IMAGE` was sent**. The print may or may not be happening; a blind retry can waste a sheet. The error copy for this state explicitly says the print was already triggered and tells the user to check the printer before retrying — retry from this state requires a second confirmation.
 
 ## Testing & gates
 
