@@ -163,9 +163,15 @@ class InstaxSession(
                     InstaxPacket.decode(bytes)?.let { frames.send(it) }
                 }
                 frames.close(TransportException("notifications completed"))
-            } catch (e: Throwable) {
-                frames.close(TransportException("notifications failed", e))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                frames.close(TransportException("notifications cancelled", e))
                 throw e
+            } catch (e: Throwable) {
+                // Close the channel and STOP — do not rethrow. Rethrowing would
+                // race the caller's typed failure (RetryableTransferError /
+                // PrintTriggeredButUnconfirmed) inside coroutineScope and win,
+                // surfacing the raw TransportException to the UI instead.
+                frames.close(TransportException("notifications failed", e))
             }
         }
         try {

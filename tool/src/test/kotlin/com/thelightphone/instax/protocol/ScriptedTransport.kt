@@ -28,6 +28,8 @@ class ScriptedTransport(
     private val notify = MutableSharedFlow<ByteArray>(extraBufferCapacity = 64)
     private var dropped = false
 
+    private val failMarker = ByteArray(0)
+
     override fun scan(): Flow<PrinterDevice> = flowOf(PrinterDevice("INSTAX-TEST(IOS)", "00:11:22:33:44:55"))
 
     override suspend fun connect(device: PrinterDevice) {
@@ -40,7 +42,12 @@ class ScriptedTransport(
         script(decodeRequest(packet))
     }
 
-    override val notifications: Flow<ByteArray> = notify
+    override val notifications: Flow<ByteArray> = kotlinx.coroutines.flow.flow {
+        notify.collect {
+            if (it === failMarker) throw TransportException("notifications stream failed")
+            emit(it)
+        }
+    }
 
     override suspend fun close() {
         closed = true
@@ -60,6 +67,11 @@ class ScriptedTransport(
     /** Simulate the connection dropping: subsequent sends throw. */
     fun dropConnection() {
         dropped = true
+    }
+
+    /** Simulate the notifications stream dying (e.g. the bridge socket closed). */
+    suspend fun failNotifications() {
+        notify.emit(failMarker)
     }
 
     companion object {

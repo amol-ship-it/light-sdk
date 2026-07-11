@@ -171,6 +171,25 @@ class InstaxSessionTest {
     }
 
     @Test
+    fun `notifications stream dying during data phase fails with RetryableTransferError`() = runTest {
+        // Regression: the real bridge transport signals disconnect by FAILING the
+        // notifications flow (not by throwing from send). That failure must still
+        // surface as RetryableTransferError, not as the raw TransportException.
+        val transport = ScriptedTransport { sent ->
+            when (sent?.opcode) {
+                Opcode.SUPPORT_FUNCTION_INFO -> happyScript()(this, sent)
+                Opcode.PRINT_IMAGE_DOWNLOAD_START -> ack(sent.opcode)
+                Opcode.PRINT_IMAGE_DOWNLOAD_DATA -> failNotifications()
+                else -> Unit
+            }
+        }
+        val session = InstaxSession(transport)
+        session.connect(device)
+        assertFailsWith<RetryableTransferError> { session.print(jpeg).toList() }
+        assertFalse(Opcode.PRINT_IMAGE in transport.sentOpcodes)
+    }
+
+    @Test
     fun `disconnect after print image fails with PrintTriggeredButUnconfirmed`() = runTest {
         val transport = ScriptedTransport { sent ->
             when (sent?.opcode) {
