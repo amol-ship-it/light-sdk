@@ -65,8 +65,10 @@ See the tool README (`tool/README.md`) and the plan
 protocol. Quick start:
 
 ```bash
-pip install bleak pytest pytest-asyncio
-python3 bridge.py --fake        # simulated printer, zero film (default dev loop)
-python3 bridge.py               # real printer over BLE
-python3 -m pytest . -v          # bridge + fake printer tests
+python3 -m venv .venv && ./.venv/bin/pip install pytest pytest-asyncio bleak
+./.venv/bin/python bridge.py --fake   # simulated printer, zero film (default dev loop)
+./.venv/bin/python bridge.py          # real printer over BLE
+./.venv/bin/python -m pytest . -v     # bridge + fake printer tests
 ```
+
+(A venv is required — Homebrew's Python is externally managed.)

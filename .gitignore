@@ -49,4 +49,6 @@ bin/
 ### Python (builder/) ###
 __pycache__/
 *.py[cod]
+.pytest_cache/scripts/instax/.venv/
+__pycache__/
 .pytest_cache/
